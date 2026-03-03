@@ -9,6 +9,9 @@ All heavy models are lazy-loaded on first access.
 
 import os
 import logging
+from dotenv import load_dotenv
+
+load_dotenv()
 
 from django.conf import settings
 
