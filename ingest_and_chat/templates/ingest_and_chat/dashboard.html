@@ -1,0 +1,1050 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>RAGAnything — Ingestion Dashboard</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      /* ── Reset & Tokens ───────────────────────────────── */
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+
+      :root {
+        --bg: #f7f7f8;
+        --surface: #ffffff;
+        --surface-hover: #fafafa;
+        --border: #e8e8ec;
+        --border-focus: #0d9488;
+        --text-1: #18181b;
+        --text-2: #71717a;
+        --text-3: #a1a1aa;
+        --accent: #0d9488;
+        --accent-light: #f0fdfa;
+        --accent-mid: #ccfbf1;
+        --success: #10b981;
+        --success-bg: #ecfdf5;
+        --error: #ef4444;
+        --error-bg: #fef2f2;
+        --warning: #f59e0b;
+        --radius: 12px;
+        --radius-sm: 8px;
+        --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04);
+        --shadow-md:
+          0 2px 8px rgba(0, 0, 0, 0.06), 0 1px 2px rgba(0, 0, 0, 0.04);
+        --font: "Outfit", -apple-system, sans-serif;
+        --mono: "JetBrains Mono", "Fira Code", monospace;
+        --ease: 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+      }
+
+      html {
+        font-size: 15px;
+      }
+
+      body {
+        font-family: var(--font);
+        background: var(--bg);
+        color: var(--text-1);
+        min-height: 100vh;
+        -webkit-font-smoothing: antialiased;
+      }
+
+      /* ── Layout Shell ─────────────────────────────────── */
+      .app {
+        max-width: 960px;
+        margin: 0 auto;
+        padding: 0 24px 80px;
+      }
+
+      /* ── Top Bar ──────────────────────────────────────── */
+      .topbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 20px 0 28px;
+        border-bottom: 1px solid var(--border);
+        margin-bottom: 32px;
+      }
+      .topbar-left {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+      .topbar-logo {
+        width: 36px;
+        height: 36px;
+        background: var(--accent);
+        border-radius: var(--radius-sm);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: white;
+        font-weight: 700;
+        font-size: 14px;
+        letter-spacing: -0.5px;
+      }
+      .topbar-title {
+        font-size: 1.2rem;
+        font-weight: 600;
+        letter-spacing: -0.3px;
+      }
+      .topbar-title span {
+        color: var(--text-3);
+        font-weight: 400;
+      }
+
+      /* Health pill */
+      .health-badge {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 0.8rem;
+        font-weight: 500;
+        color: var(--text-3);
+        padding: 6px 12px;
+        border-radius: 20px;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        transition: all var(--ease);
+      }
+      .health-badge.ok {
+        color: var(--success);
+        border-color: #d1fae5;
+        background: var(--success-bg);
+      }
+      .health-badge.err {
+        color: var(--error);
+        border-color: #fecaca;
+        background: var(--error-bg);
+      }
+      .health-dot {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: var(--text-3);
+        transition: background var(--ease);
+      }
+      .health-badge.ok .health-dot {
+        background: var(--success);
+        animation: pulse-dot 2s infinite;
+      }
+      .health-badge.err .health-dot {
+        background: var(--error);
+      }
+      @keyframes pulse-dot {
+        0%,
+        100% {
+          opacity: 1;
+        }
+        50% {
+          opacity: 0.4;
+        }
+      }
+
+      /* ── Shared ───────────────────────────────────────── */
+      .section-label {
+        font-size: 0.72rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: var(--text-3);
+        margin-bottom: 12px;
+      }
+      .card {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        padding: 24px;
+        box-shadow: var(--shadow-sm);
+        margin-bottom: 24px;
+      }
+
+      /* ── Input Row ────────────────────────────────────── */
+      .input-row {
+        display: flex;
+        gap: 10px;
+        align-items: stretch;
+      }
+      .path-input {
+        flex: 1;
+        font-family: var(--mono);
+        font-size: 0.87rem;
+        padding: 12px 16px;
+        border: 1.5px solid var(--border);
+        border-radius: var(--radius-sm);
+        background: var(--bg);
+        color: var(--text-1);
+        outline: none;
+        transition:
+          border-color var(--ease),
+          box-shadow var(--ease);
+      }
+      .path-input::placeholder {
+        color: var(--text-3);
+      }
+      .path-input:focus {
+        border-color: var(--border-focus);
+        box-shadow: 0 0 0 3px rgba(13, 148, 136, 0.1);
+      }
+      .path-input:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+
+      .btn {
+        font-family: var(--font);
+        font-size: 0.87rem;
+        font-weight: 600;
+        padding: 12px 24px;
+        border: none;
+        border-radius: var(--radius-sm);
+        cursor: pointer;
+        transition: all var(--ease);
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        white-space: nowrap;
+      }
+      .btn:active {
+        transform: scale(0.97);
+      }
+      .btn-primary {
+        background: var(--accent);
+        color: white;
+      }
+      .btn-primary:hover {
+        background: #0f766e;
+      }
+      .btn-primary:disabled {
+        background: var(--text-3);
+        cursor: not-allowed;
+        transform: none;
+      }
+      .btn-danger {
+        background: var(--error-bg);
+        color: var(--error);
+        border: 1px solid #fecaca;
+      }
+      .btn-danger:hover {
+        background: #fee2e2;
+      }
+
+      .input-hint {
+        font-size: 0.78rem;
+        color: var(--text-3);
+        margin-top: 10px;
+        line-height: 1.5;
+      }
+
+      /* ── Pipeline Steps ───────────────────────────────── */
+      .pipeline-steps {
+        display: flex;
+        gap: 0;
+        align-items: flex-start;
+        position: relative;
+      }
+      .pipeline-step {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        text-align: center;
+        position: relative;
+      }
+      .step-node {
+        width: 32px;
+        height: 32px;
+        border-radius: 50%;
+        border: 2px solid var(--border);
+        background: var(--surface);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 0.7rem;
+        font-weight: 600;
+        color: var(--text-3);
+        transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+        position: relative;
+        z-index: 2;
+      }
+      .step-connector {
+        position: absolute;
+        top: 16px;
+        left: calc(50% + 16px);
+        right: calc(-50% + 16px);
+        height: 2px;
+        background: var(--border);
+        z-index: 1;
+        transition: background 0.4s ease;
+      }
+      .pipeline-step:last-child .step-connector {
+        display: none;
+      }
+      .step-label {
+        margin-top: 8px;
+        font-size: 0.7rem;
+        font-weight: 500;
+        color: var(--text-3);
+        line-height: 1.3;
+        max-width: 80px;
+        transition: color var(--ease);
+      }
+
+      /* States */
+      .pipeline-step.active .step-node {
+        border-color: var(--accent);
+        background: var(--accent-light);
+        color: var(--accent);
+        box-shadow: 0 0 0 4px rgba(13, 148, 136, 0.12);
+        animation: step-pulse 1.5s ease infinite;
+      }
+      .pipeline-step.active .step-label {
+        color: var(--accent);
+      }
+      .pipeline-step.done .step-node {
+        border-color: var(--success);
+        background: var(--success);
+        color: white;
+      }
+      .pipeline-step.done .step-label {
+        color: var(--success);
+      }
+      .pipeline-step.done .step-connector {
+        background: var(--success);
+      }
+      .pipeline-step.error .step-node {
+        border-color: var(--error);
+        background: var(--error);
+        color: white;
+      }
+      .pipeline-step.error .step-label {
+        color: var(--error);
+      }
+      @keyframes step-pulse {
+        0%,
+        100% {
+          box-shadow: 0 0 0 4px rgba(13, 148, 136, 0.12);
+        }
+        50% {
+          box-shadow: 0 0 0 8px rgba(13, 148, 136, 0.06);
+        }
+      }
+
+      /* ── Summary Chips ────────────────────────────────── */
+      .summary-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+        gap: 10px;
+        margin-bottom: 24px;
+      }
+      .summary-chip {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 14px 16px;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-sm);
+        animation: slideUp 0.3s ease both;
+      }
+      .chip-count {
+        font-size: 1.4rem;
+        font-weight: 700;
+        color: var(--text-1);
+        line-height: 1;
+      }
+      .chip-label {
+        font-size: 0.72rem;
+        font-weight: 500;
+        color: var(--text-2);
+        text-transform: capitalize;
+      }
+
+      /* ── Log Terminal ─────────────────────────────────── */
+      .log-card {
+        background: #1a1a2e;
+        border: 1px solid #2a2a3e;
+        border-radius: var(--radius);
+        overflow: hidden;
+        margin-bottom: 24px;
+        box-shadow: var(--shadow-md);
+      }
+      .log-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 12px 16px;
+        background: rgba(255, 255, 255, 0.03);
+        border-bottom: 1px solid #2a2a3e;
+      }
+      .log-header-left {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .log-dots {
+        display: flex;
+        gap: 5px;
+      }
+      .log-dots span {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+      }
+      .log-dots span:nth-child(1) {
+        background: #ef4444;
+      }
+      .log-dots span:nth-child(2) {
+        background: #f59e0b;
+      }
+      .log-dots span:nth-child(3) {
+        background: #10b981;
+      }
+      .log-title {
+        font-family: var(--mono);
+        font-size: 0.72rem;
+        color: #71717a;
+        font-weight: 500;
+      }
+      .log-clear-btn {
+        font-family: var(--font);
+        font-size: 0.7rem;
+        color: #52525b;
+        background: none;
+        border: 1px solid #2a2a3e;
+        border-radius: 4px;
+        padding: 3px 8px;
+        cursor: pointer;
+        transition: all var(--ease);
+      }
+      .log-clear-btn:hover {
+        color: #a1a1aa;
+        border-color: #3a3a4e;
+      }
+      .log-body {
+        padding: 16px;
+        max-height: 340px;
+        overflow-y: auto;
+        font-family: var(--mono);
+        font-size: 0.78rem;
+        line-height: 1.7;
+        color: #d4d4d8;
+        scrollbar-width: thin;
+        scrollbar-color: #3a3a4e transparent;
+      }
+      .log-body::-webkit-scrollbar {
+        width: 6px;
+      }
+      .log-body::-webkit-scrollbar-track {
+        background: transparent;
+      }
+      .log-body::-webkit-scrollbar-thumb {
+        background: #3a3a4e;
+        border-radius: 3px;
+      }
+
+      .log-line {
+        padding: 1px 0;
+      }
+      .log-line.ev-status {
+        color: #67e8f9;
+      }
+      .log-line.ev-log {
+        color: #d4d4d8;
+      }
+      .log-line.ev-error {
+        color: #fca5a5;
+      }
+      .log-line.ev-complete {
+        color: #6ee7b7;
+      }
+      .log-ts {
+        color: #52525b;
+        margin-right: 8px;
+        user-select: none;
+      }
+      .log-empty {
+        color: #52525b;
+        font-style: italic;
+        text-align: center;
+        padding: 40px 0;
+      }
+
+      /* ── Result Banner ────────────────────────────────── */
+      .result-banner {
+        display: none;
+        padding: 20px 24px;
+        border-radius: var(--radius);
+        margin-bottom: 24px;
+        align-items: flex-start;
+        gap: 14px;
+        animation: slideUp 0.3s ease;
+      }
+      .result-banner.visible {
+        display: flex;
+      }
+      .result-banner.success {
+        background: var(--success-bg);
+        border: 1px solid #a7f3d0;
+      }
+      .result-banner.fail {
+        background: var(--error-bg);
+        border: 1px solid #fecaca;
+      }
+      .result-icon {
+        width: 24px;
+        height: 24px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+        font-size: 0.8rem;
+        margin-top: 1px;
+      }
+      .result-banner.success .result-icon {
+        background: var(--success);
+        color: white;
+      }
+      .result-banner.fail .result-icon {
+        background: var(--error);
+        color: white;
+      }
+      .result-body h3 {
+        font-size: 0.93rem;
+        font-weight: 600;
+        margin-bottom: 4px;
+      }
+      .result-banner.success .result-body h3 {
+        color: #065f46;
+      }
+      .result-banner.fail .result-body h3 {
+        color: #991b1b;
+      }
+      .result-body p {
+        font-size: 0.82rem;
+        line-height: 1.5;
+      }
+      .result-banner.success .result-body p {
+        color: #047857;
+      }
+      .result-banner.fail .result-body p {
+        color: #dc2626;
+      }
+
+      /* ── Utility ──────────────────────────────────────── */
+      @keyframes slideUp {
+        from {
+          opacity: 0;
+          transform: translateY(8px);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
+      }
+      .fade-in {
+        animation: slideUp 0.3s ease;
+      }
+      .hidden {
+        display: none !important;
+      }
+
+      @media (max-width: 700px) {
+        .app {
+          padding: 0 16px 60px;
+        }
+        .input-row {
+          flex-direction: column;
+        }
+        .pipeline-steps {
+          flex-wrap: wrap;
+          gap: 8px;
+          justify-content: center;
+        }
+        .step-connector {
+          display: none !important;
+        }
+        .summary-grid {
+          grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="app">
+      <!-- ─── Top Bar ─────────────────────────────────── -->
+      <header class="topbar">
+        <div class="topbar-left">
+          <div class="topbar-logo">RA</div>
+          <div class="topbar-title">RAGAnything <span>/ Ingest</span></div>
+        </div>
+        <div class="health-badge" id="healthBadge">
+          <div class="health-dot"></div>
+          <span id="healthText">Checking&hellip;</span>
+        </div>
+      </header>
+
+      <!-- ─── Path Input ──────────────────────────────── -->
+      <div class="card">
+        <div class="section-label">Target Path</div>
+        <div class="input-row">
+          <input
+            type="text"
+            class="path-input"
+            id="pathInput"
+            placeholder="/home/user/documents/my-project"
+            spellcheck="false"
+            autocomplete="off"
+          />
+          <button
+            class="btn btn-primary"
+            id="ingestBtn"
+            onclick="startIngestion()"
+          >
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2.5"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <polyline points="16 16 12 12 8 16" />
+              <line x1="12" y1="12" x2="12" y2="21" />
+              <path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3" />
+            </svg>
+            Ingest
+          </button>
+          <button
+            class="btn btn-danger hidden"
+            id="stopBtn"
+            onclick="stopIngestion()"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+              <rect x="4" y="4" width="16" height="16" rx="2" />
+            </svg>
+            Stop
+          </button>
+        </div>
+        <div class="input-hint">
+          Enter an absolute path on the server — a file or directory. Supports
+          code, text, PDF, DOCX, PPTX, CSV/XLSX, images, and audio.
+        </div>
+      </div>
+
+      <!-- ─── Pipeline Progress ───────────────────────── -->
+      <div class="card hidden" id="pipelineCard">
+        <div class="section-label">Pipeline Progress</div>
+        <div class="pipeline-steps" id="pipelineSteps">
+          <div class="pipeline-step" data-step="read_and_classify_files">
+            <div class="step-node">1</div>
+            <div class="step-connector"></div>
+            <div class="step-label">Classify Files</div>
+          </div>
+          <div class="pipeline-step" data-step="process_text_documents">
+            <div class="step-node">2</div>
+            <div class="step-connector"></div>
+            <div class="step-label">Text Docs</div>
+          </div>
+          <div class="pipeline-step" data-step="process_media_files">
+            <div class="step-node">3</div>
+            <div class="step-connector"></div>
+            <div class="step-label">Media Files</div>
+          </div>
+          <div class="pipeline-step" data-step="process_structured_files">
+            <div class="step-node">4</div>
+            <div class="step-connector"></div>
+            <div class="step-label">Structured</div>
+          </div>
+          <div class="pipeline-step" data-step="generate_metadata">
+            <div class="step-node">5</div>
+            <div class="step-connector"></div>
+            <div class="step-label">Metadata</div>
+          </div>
+          <div class="pipeline-step" data-step="setup_postgres">
+            <div class="step-node">6</div>
+            <div class="step-connector"></div>
+            <div class="step-label">Postgres</div>
+          </div>
+          <div class="pipeline-step" data-step="vectorize_and_store">
+            <div class="step-node">7</div>
+            <div class="step-label">Vectorize</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ─── Result Banner ───────────────────────────── -->
+      <div class="result-banner" id="resultBanner">
+        <div class="result-icon" id="resultIcon"></div>
+        <div class="result-body">
+          <h3 id="resultTitle"></h3>
+          <p id="resultText"></p>
+        </div>
+      </div>
+
+      <!-- ─── File Summary ────────────────────────────── -->
+      <div class="hidden" id="summarySection">
+        <div class="section-label">Files Discovered</div>
+        <div class="summary-grid" id="summaryGrid"></div>
+      </div>
+
+      <!-- ─── Live Log ────────────────────────────────── -->
+      <div class="log-card hidden" id="logCard">
+        <div class="log-header">
+          <div class="log-header-left">
+            <div class="log-dots"><span></span><span></span><span></span></div>
+            <span class="log-title">pipeline.log</span>
+          </div>
+          <button class="log-clear-btn" onclick="clearLog()">Clear</button>
+        </div>
+        <div class="log-body" id="logBody">
+          <div class="log-empty">Waiting for pipeline to start&hellip;</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ──────────────────────────────────────────────────── -->
+    <script>
+      (function () {
+        "use strict";
+
+        // ── Config ─────────────────────────────────────────
+        const API = "http://localhost:8000/api/rag/";
+
+        // ── Refs ───────────────────────────────────────────
+        const el = (id) => document.getElementById(id);
+        const pathInput = el("pathInput");
+        const ingestBtn = el("ingestBtn");
+        const stopBtn = el("stopBtn");
+        const pipelineCard = el("pipelineCard");
+        const logCard = el("logCard");
+        const logBody = el("logBody");
+        const summarySection = el("summarySection");
+        const summaryGrid = el("summaryGrid");
+        const resultBanner = el("resultBanner");
+        const healthBadge = el("healthBadge");
+        const healthText = el("healthText");
+
+        // ── Constants ──────────────────────────────────────
+        const STEPS = [
+          "read_and_classify_files",
+          "process_text_documents",
+          "process_media_files",
+          "process_structured_files",
+          "generate_metadata",
+          "setup_postgres",
+          "vectorize_and_store",
+        ];
+
+        // Keywords that signal a node just finished
+        const DONE_KEYWORDS = [
+          "classified",
+          "processed",
+          "extracted",
+          "read",
+          "generated",
+          "ready",
+          "stored",
+          "inserted",
+          "skipping",
+          "skip",
+        ];
+
+        let isRunning = false;
+        let controller = null; // AbortController
+
+        // ── Health ─────────────────────────────────────────
+        async function checkHealth() {
+          try {
+            const r = await fetch(API + "health/", {
+              signal: AbortSignal.timeout(4000),
+            });
+            if (r.ok) {
+              healthBadge.className = "health-badge ok";
+              healthText.textContent = "Connected";
+            } else {
+              throw 0;
+            }
+          } catch {
+            healthBadge.className = "health-badge err";
+            healthText.textContent = "Offline";
+          }
+        }
+        checkHealth();
+        setInterval(checkHealth, 30000);
+
+        // ── Log helpers ────────────────────────────────────
+        function esc(s) {
+          const d = document.createElement("div");
+          d.textContent = s;
+          return d.innerHTML;
+        }
+
+        function logLine(text, type) {
+          const empty = logBody.querySelector(".log-empty");
+          if (empty) empty.remove();
+          const div = document.createElement("div");
+          div.className = "log-line ev-" + (type || "log");
+          const ts = new Date().toLocaleTimeString("en-US", {
+            hour12: false,
+            hour: "2-digit",
+            minute: "2-digit",
+            second: "2-digit",
+          });
+          div.innerHTML = '<span class="log-ts">' + ts + "</span>" + esc(text);
+          logBody.appendChild(div);
+          logBody.scrollTop = logBody.scrollHeight;
+        }
+
+        window.clearLog = function () {
+          logBody.innerHTML = '<div class="log-empty">Log cleared.</div>';
+        };
+
+        // ── Pipeline step UI ───────────────────────────────
+        function resetSteps() {
+          document
+            .querySelectorAll(".pipeline-step")
+            .forEach((e) => e.classList.remove("active", "done", "error"));
+        }
+
+        function setStep(name, state) {
+          const node = document.querySelector(
+            '.pipeline-step[data-step="' + name + '"]',
+          );
+          if (!node) return;
+          node.classList.remove("active", "done", "error");
+          if (state) node.classList.add(state);
+        }
+
+        function markDone(steps) {
+          if (!steps) return;
+          steps.forEach((s) => setStep(s, "done"));
+        }
+
+        function activateNext(done) {
+          if (!done) return;
+          const set = new Set(done);
+          for (const s of STEPS) {
+            if (!set.has(s)) {
+              setStep(s, "active");
+              return;
+            }
+          }
+        }
+
+        // ── File summary chips ─────────────────────────────
+        function showSummary(counts) {
+          summaryGrid.innerHTML = "";
+          const entries = Object.entries(counts).filter(([, v]) => v > 0);
+          if (!entries.length) {
+            summarySection.classList.add("hidden");
+            return;
+          }
+          entries.forEach(([type, count], i) => {
+            const chip = document.createElement("div");
+            chip.className = "summary-chip";
+            chip.style.animationDelay = i * 50 + "ms";
+            chip.innerHTML =
+              '<div class="chip-count">' +
+              count +
+              "</div>" +
+              '<div class="chip-label">' +
+              esc(type) +
+              "</div>";
+            summaryGrid.appendChild(chip);
+          });
+          summarySection.classList.remove("hidden");
+        }
+
+        // ── Result banner ──────────────────────────────────
+        function showResult(ok, title, text) {
+          resultBanner.className =
+            "result-banner visible " + (ok ? "success" : "fail");
+          el("resultIcon").textContent = ok ? "\u2713" : "\u2715";
+          el("resultTitle").textContent = title;
+          el("resultText").textContent = text;
+        }
+
+        // ── Running-state toggle ───────────────────────────
+        function setRunning(v) {
+          isRunning = v;
+          pathInput.disabled = v;
+          ingestBtn.disabled = v;
+          ingestBtn.classList.toggle("hidden", v);
+          stopBtn.classList.toggle("hidden", !v);
+          if (v) {
+            pipelineCard.classList.remove("hidden");
+            logCard.classList.remove("hidden");
+            resultBanner.className = "result-banner";
+            resetSteps();
+            setStep(STEPS[0], "active");
+          }
+        }
+
+        // ── Start ingestion ────────────────────────────────
+        window.startIngestion = async function () {
+          const target = pathInput.value.trim();
+          if (!target) {
+            pathInput.focus();
+            pathInput.style.borderColor = "var(--error)";
+            setTimeout(() => (pathInput.style.borderColor = ""), 1200);
+            return;
+          }
+
+          setRunning(true);
+          logBody.innerHTML = "";
+          summarySection.classList.add("hidden");
+          summaryGrid.innerHTML = "";
+          logLine("Starting ingestion for: " + target, "status");
+
+          controller = new AbortController();
+          let completed = [];
+
+          try {
+            const res = await fetch(API + "ingest/", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ target_path: target }),
+              signal: controller.signal,
+            });
+
+            if (!res.ok) {
+              const err = await res
+                .json()
+                .catch(() => ({ error: "HTTP " + res.status }));
+              throw new Error(err.error || "Server returned " + res.status);
+            }
+
+            const reader = res.body.getReader();
+            const decoder = new TextDecoder();
+            let buf = "";
+
+            while (true) {
+              const { done, value } = await reader.read();
+              if (done) break;
+              buf += decoder.decode(value, { stream: true });
+
+              const lines = buf.split("\n");
+              buf = lines.pop();
+
+              for (const raw of lines) {
+                let json_str = raw.trim();
+                if (!json_str) continue;
+                if (json_str.startsWith("data: "))
+                  json_str = json_str.substring(6);
+
+                let msg;
+                try {
+                  msg = JSON.parse(json_str);
+                } catch {
+                  continue;
+                }
+
+                const ev = msg.event;
+                const d = msg.data || {};
+
+                if (ev === "status") {
+                  logLine(d.message || "Status update", "status");
+                }
+
+                if (ev === "log") {
+                  logLine(d.text || "", "log");
+                  // Detect step completions from node log output
+                  const t = (d.text || "").toLowerCase();
+                  for (const step of STEPS) {
+                    if (
+                      t.includes("[" + step + "]") &&
+                      DONE_KEYWORDS.some((kw) => t.includes(kw)) &&
+                      !completed.includes(step)
+                    ) {
+                      completed.push(step);
+                      markDone(completed);
+                      activateNext(completed);
+                    }
+                  }
+                }
+
+                if (ev === "complete") {
+                  completed = d.steps_completed || STEPS;
+                  markDone(completed);
+                  if (d.file_counts) showSummary(d.file_counts);
+                  const n = d.records_inserted || 0;
+                  showResult(
+                    true,
+                    "Ingestion Complete",
+                    n +
+                      " record" +
+                      (n !== 1 ? "s" : "") +
+                      " inserted across " +
+                      (d.steps_completed || []).length +
+                      " pipeline steps.",
+                  );
+                  logLine(
+                    "\u2713 Complete \u2014 " + n + " records inserted",
+                    "complete",
+                  );
+                }
+
+                if (ev === "error") {
+                  logLine("\u2715 Error: " + (d.message || "Unknown"), "error");
+                  (d.errors || []).forEach((e) =>
+                    logLine("  \u2192 " + e, "error"),
+                  );
+                  if (d.step) setStep(d.step, "error");
+                  showResult(
+                    false,
+                    "Ingestion Failed",
+                    d.message || "An error occurred during the pipeline.",
+                  );
+                }
+
+                if (ev === "done") {
+                  logLine("\u2014 Stream finished \u2014", "status");
+                }
+              }
+            }
+          } catch (err) {
+            if (err.name === "AbortError") {
+              logLine("Ingestion aborted by user.", "error");
+            } else {
+              logLine("Connection error: " + err.message, "error");
+              showResult(false, "Connection Error", err.message);
+            }
+          } finally {
+            setRunning(false);
+            controller = null;
+          }
+        };
+
+        // ── Stop ───────────────────────────────────────────
+        window.stopIngestion = async function () {
+          if (controller) controller.abort();
+          try {
+            await fetch(API + "stop/", { method: "POST" });
+          } catch {
+            /* ignore */
+          }
+          logLine("Stop signal sent to server.", "status");
+        };
+
+        // ── Enter key ──────────────────────────────────────
+        pathInput.addEventListener("keydown", function (e) {
+          if (e.key === "Enter" && !isRunning) window.startIngestion();
+        });
+      })();
+    </script>
+  </body>
+</html>

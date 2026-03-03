@@ -1,6 +1,7 @@
 # ingest_and_chat/views.py
 """
 Django views that replicate the original FastAPI endpoints:
+    GET  /            - Ingestion dashboard UI
     GET  /health/     - health check
     POST /ingest/     - run ingestion (SSE streaming response)
     POST /query/      - RAG query (JSON response)
@@ -12,12 +13,19 @@ import json
 import logging
 
 from django.http import JsonResponse, StreamingHttpResponse
+from django.shortcuts import render
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST
 
 from . import services
 
 logger = logging.getLogger("ingest_and_chat")
+
+
+@require_GET
+def dashboard(request):
+    """Serve the ingestion dashboard UI."""
+    return render(request, "ingest_and_chat/dashboard.html")
 
 
 @require_GET
