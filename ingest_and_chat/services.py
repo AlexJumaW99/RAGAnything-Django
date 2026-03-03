@@ -162,6 +162,10 @@ def run_ingestion_stream(target_path):
                 def flush(self):
                     self.original.flush()
                     self.capture.flush()
+                def isatty(self):
+                    return False
+                def __getattr__(self, name):
+                    return getattr(self.original, os.name)
 
             sys.stdout = TeeWriter(old_stdout, captured, emit)
 
