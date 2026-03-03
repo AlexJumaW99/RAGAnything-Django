@@ -42,6 +42,9 @@ class RAGIngestionState(TypedDict):
     pg_password: str
     pg_database: str
 
+    # Database session (UUID returned by setup_postgres)
+    db_session_id: Optional[str]
+
     # Execution Tracking
     records_inserted: int
     current_step: Optional[str]

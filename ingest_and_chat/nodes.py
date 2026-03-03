@@ -13,8 +13,8 @@ import json
 import shutil
 import datetime
 import logging
+import uuid
 
-import psycopg2
 from psycopg2.extras import Json
 from langchain_text_splitters import RecursiveCharacterTextSplitter, Language
 
@@ -31,6 +31,7 @@ from .config import (
     CHUNK_SIZE_CODE,
     CHUNK_OVERLAP_CODE,
     LOGS_ROOT,
+    MEDIA_STORAGE_ROOT,
     TEXT_EXTENSIONS,
     CODE_EXTENSIONS,
     CONFIG_EXTENSIONS,
@@ -42,6 +43,7 @@ from .config import (
     CODE_LANGUAGE_MAP,
     MIME_TYPE_MAP,
 )
+from .db import get_connection_from_state
 from .utils import build_project_tree, get_file_stats
 
 logger = logging.getLogger("ingest_and_chat")
@@ -194,6 +196,34 @@ def _copy_original(output_dir, subdir, rel_path, src_path):
     except Exception:
         pass
     return out_path
+
+
+# ---------------------------------------------------------------------------
+# Media Storage Helper — copy binary to disk, return storage path
+# ---------------------------------------------------------------------------
+
+def _store_media_on_disk(filepath, session_id):
+    """Copy a media file to MEDIA_STORAGE_ROOT/<session_id>/ and return the path."""
+    try:
+        file_size_mb = os.path.getsize(filepath) / (1024 * 1024)
+        if file_size_mb > MAX_BINARY_MB:
+            return None, f"File too large ({file_size_mb:.1f}MB > {MAX_BINARY_MB}MB limit)"
+
+        dest_dir = os.path.join(MEDIA_STORAGE_ROOT, str(session_id))
+        os.makedirs(dest_dir, exist_ok=True)
+
+        basename = os.path.basename(filepath)
+        dest_path = os.path.join(dest_dir, basename)
+
+        # Handle name collisions
+        if os.path.exists(dest_path):
+            name, ext = os.path.splitext(basename)
+            dest_path = os.path.join(dest_dir, f"{name}_{uuid.uuid4().hex[:8]}{ext}")
+
+        shutil.copy2(filepath, dest_path)
+        return dest_path, None
+    except Exception as e:
+        return None, str(e)
 
 
 # ---------------------------------------------------------------------------
@@ -356,14 +386,37 @@ def _read_structured(filepath):
             df = pd.read_excel(filepath, nrows=500)
         else:
             return {"content": "", "column_names": [], "row_count": 0}
+
+        # Build schema description for LLM context
+        schema_parts = []
+        for col in df.columns:
+            dtype = str(df[col].dtype)
+            non_null = df[col].count()
+            unique = df[col].nunique()
+            schema_parts.append(f"  - {col} ({dtype}): {non_null} non-null, {unique} unique values")
+
+        schema_description = (
+            f"File: {os.path.basename(filepath)}\n"
+            f"Shape: {len(df)} rows x {len(df.columns)} columns\n"
+            f"Columns:\n" + "\n".join(schema_parts)
+        )
+
+        # Sample rows (first 5) as list of dicts for JSONB storage
+        sample_rows = json.loads(df.head(5).to_json(orient="records", default_handler=str))
+
         return {
             "content": df.to_csv(index=False),
+            "schema_description": schema_description,
+            "sample_rows": sample_rows,
             "column_names": list(df.columns),
             "row_count": len(df),
             "dtypes": {col: str(dtype) for col, dtype in df.dtypes.items()},
         }
     except Exception as e:
-        return {"content": "", "column_names": [], "row_count": 0, "error": str(e)}
+        return {
+            "content": "", "schema_description": "", "sample_rows": [],
+            "column_names": [], "row_count": 0, "error": str(e),
+        }
 
 
 # ===========================================================================
@@ -625,10 +678,11 @@ def process_structured_files(state):
                 preview = {
                     "filepath": fpath,
                     "file_type": finfo.get("subtype", "csv"),
+                    "schema_description": result.get("schema_description", ""),
                     "column_names": result.get("column_names", []),
                     "dtypes": result.get("dtypes", {}),
                     "row_count": result.get("row_count", 0),
-                    "first_10_rows": result.get("content", "").split("\n")[:11],
+                    "sample_rows": result.get("sample_rows", []),
                 }
                 _save_json(output_dir, "structured", rel, ".preview.json", preview)
                 _copy_original(output_dir, "structured", rel, fpath)
@@ -663,7 +717,7 @@ def generate_metadata(state):
          for d in docs]
         + [(m["filepath"], m.get("transcript", "")[:6000], m.get("file_type", ""))
            for m in media]
-        + [(s["filepath"], s.get("content", "")[:3000], s.get("file_type", ""))
+        + [(s["filepath"], s.get("schema_description", s.get("content", ""))[:3000], s.get("file_type", ""))
            for s in structured]
     )
 
@@ -739,117 +793,52 @@ def generate_metadata(state):
 # ===========================================================================
 # NODE 6: Setup PostgreSQL
 # ===========================================================================
-
-_REQUIRED_TABLES = {
-    "document_chunks": {
-        "columns": {
-            "id", "filepath", "file_type", "chunk_index", "total_chunks",
-            "content", "metadata", "embedding", "created_at",
-        },
-        "create_sql": """
-            CREATE TABLE document_chunks (
-                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-                filepath TEXT NOT NULL,
-                file_type TEXT NOT NULL,
-                chunk_index INTEGER NOT NULL,
-                total_chunks INTEGER NOT NULL,
-                content TEXT NOT NULL,
-                metadata JSONB,
-                embedding vector(384),
-                created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-            );
-        """,
-    },
-    "structured_files": {
-        "columns": {
-            "id", "filepath", "file_type", "content", "column_names",
-            "row_count", "metadata", "summary_embedding", "created_at",
-        },
-        "create_sql": """
-            CREATE TABLE structured_files (
-                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-                filepath TEXT NOT NULL,
-                file_type TEXT NOT NULL,
-                content TEXT NOT NULL,
-                column_names JSONB,
-                row_count INTEGER,
-                metadata JSONB,
-                summary_embedding vector(384),
-                created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-            );
-        """,
-    },
-    "media_files": {
-        "columns": {
-            "id", "filepath", "file_type", "binary_data", "transcript",
-            "metadata", "transcript_embedding", "created_at",
-        },
-        "create_sql": """
-            CREATE TABLE media_files (
-                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-                filepath TEXT NOT NULL,
-                file_type TEXT NOT NULL,
-                binary_data BYTEA,
-                transcript TEXT,
-                metadata JSONB,
-                transcript_embedding vector(384),
-                created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-            );
-        """,
-    },
-}
-
-
-def _get_existing_columns(cur, table_name):
-    cur.execute("""
-        SELECT column_name
-        FROM information_schema.columns
-        WHERE table_schema = 'public' AND table_name = %s
-    """, (table_name,))
-    return {row[0] for row in cur.fetchall()}
-
+# Table definitions, indexes, and database creation logic live in db.py.
+# This node just ensures the DB is ready and creates the ingestion session.
 
 def setup_postgres(state):
     step_name = "setup_postgres"
-    cmd_str = "CREATE TABLES (document_chunks, structured_files, media_files)"
-    logger.info("[%s] Setting up PostgreSQL tables...", step_name)
+    cmd_str = "Ensure DB + tables exist, create ingestion session"
+    logger.info("[%s] Setting up PostgreSQL...", step_name)
 
     try:
-        conn = psycopg2.connect(
-            host=state.get("pg_host"),
-            port=state.get("pg_port"),
-            user=state.get("pg_username"),
-            password=state.get("pg_password"),
-            dbname=state.get("pg_database"),
-            connect_timeout=10,
-        )
+        # db.get_connection_from_state() auto-creates the database, pgvector
+        # extension, all tables, and all indexes if they don't already exist.
+        conn = get_connection_from_state(state)
         conn.autocommit = True
         cur = conn.cursor()
 
-        cur.execute("CREATE EXTENSION IF NOT EXISTS vector;")
-        logger.info("  pgvector extension enabled")
+        logger.info("  Database, tables, and indexes verified")
 
-        for table_name, spec in _REQUIRED_TABLES.items():
-            existing_cols = _get_existing_columns(cur, table_name)
-            if not existing_cols:
-                cur.execute(spec["create_sql"])
-                logger.info("  Created table: %s", table_name)
-            elif not spec["columns"].issubset(existing_cols):
-                missing = spec["columns"] - existing_cols
-                logger.warning("  Table '%s' stale schema (missing: %s) -- recreating",
-                               table_name, missing)
-                cur.execute(f"DROP TABLE IF EXISTS {table_name} CASCADE;")
-                cur.execute(spec["create_sql"])
-                logger.info("  Recreated table: %s", table_name)
-            else:
-                logger.info("  Table exists with correct schema: %s", table_name)
+        # Insert a new ingestion session record
+        target_path = state.get("target_path", "")
+        project_name = os.path.basename(os.path.abspath(target_path))
+        session_config = {
+            "ocr_method": OCR_METHOD,
+            "transcription_method": TRANSCRIPTION_METHOD,
+            "chunk_size_text": CHUNK_SIZE_TEXT,
+            "chunk_size_code": CHUNK_SIZE_CODE,
+        }
+
+        classified = state.get("classified_files") or {}
+        file_count = sum(len(v) for v in classified.values())
+
+        cur.execute("""
+            INSERT INTO ingestion_sessions (name, target_path, status, file_count, config)
+            VALUES (%s, %s, 'running', %s, %s)
+            RETURNING id
+        """, (project_name, target_path, file_count, Json(session_config)))
+
+        db_session_id = str(cur.fetchone()[0])
+        logger.info("  Created ingestion session: %s", db_session_id)
 
         cur.close()
         conn.close()
-        logger.info("[%s] Tables ready.", step_name)
+        logger.info("[%s] Tables and session ready.", step_name)
 
         return _success_step(state, step_name, {
-            "last_stdout": "PostgreSQL tables created/verified",
+            "db_session_id": db_session_id,
+            "last_stdout": f"PostgreSQL tables created/verified. Session: {db_session_id}",
         }, cmd_str)
 
     except Exception as e:
@@ -857,7 +846,7 @@ def setup_postgres(state):
 
 
 # ===========================================================================
-# NODE 7: Vectorize & Store
+# NODE 7: Vectorize & Store  (NEW SCHEMA)
 # ===========================================================================
 
 def _get_text_splitter(language):
@@ -884,6 +873,7 @@ def vectorize_and_store(state):
     metadata_map = state.get("file_metadata") or {}
     output_dir = state.get("output_dir", "")
     target_path = state.get("target_path", "")
+    db_session_id = state.get("db_session_id")
     embedding_model = get_embedding_model()
 
     docs = state.get("processed_documents") or []
@@ -894,13 +884,7 @@ def vectorize_and_store(state):
                 step_name, len(docs), len(media), len(structured))
 
     try:
-        conn = psycopg2.connect(
-            host=state.get("pg_host"),
-            port=state.get("pg_port"),
-            user=state.get("pg_username"),
-            password=state.get("pg_password"),
-            dbname=state.get("pg_database"),
-        )
+        conn = get_connection_from_state(state)
         cur = conn.cursor()
         total_inserted = 0
         saved_chunks = 0
@@ -928,10 +912,11 @@ def vectorize_and_store(state):
                 formatted_emb = f"[{','.join(map(str, emb))}]"
                 cur.execute("""
                     INSERT INTO document_chunks
-                        (filepath, file_type, chunk_index, total_chunks,
+                        (session_id, filepath, file_type, chunk_index, total_chunks,
                          content, metadata, embedding)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                 """, (
+                    db_session_id,
                     filepath, doc.get("file_type", "unknown"),
                     idx, len(chunks), chunk, Json(chunk_meta), formatted_emb,
                 ))
@@ -961,25 +946,20 @@ def vectorize_and_store(state):
                 })
                 saved_chunks += 1
 
-        # ----- 2. Media Files -----
+        # ----- 2. Media Files (disk storage, no BYTEA) -----
         for item in media:
             filepath = item["filepath"]
             transcript = item.get("transcript", "")
             meta = metadata_map.get(filepath, {})
 
-            binary_data = None
-            try:
-                file_size_mb = os.path.getsize(filepath) / (1024 * 1024)
-                if file_size_mb <= MAX_BINARY_MB:
-                    with open(filepath, "rb") as f:
-                        binary_data = f.read()
+            # Store binary on disk instead of in the database
+            storage_path = None
+            if db_session_id:
+                disk_path, disk_err = _store_media_on_disk(filepath, db_session_id)
+                if disk_path:
+                    storage_path = disk_path
                 else:
-                    meta["binary_stored"] = False
-                    meta["binary_note"] = (
-                        f"File too large ({file_size_mb:.1f}MB > {MAX_BINARY_MB}MB limit)."
-                    )
-            except Exception:
-                pass
+                    meta["storage_error"] = disk_err
 
             transcript_emb = None
             if transcript and not transcript.startswith("["):
@@ -988,25 +968,35 @@ def vectorize_and_store(state):
 
             cur.execute("""
                 INSERT INTO media_files
-                    (filepath, file_type, binary_data, transcript,
-                     metadata, transcript_embedding)
-                VALUES (%s, %s, %s, %s, %s, %s)
+                    (session_id, filepath, file_type, storage_path,
+                     transcript, metadata, transcript_embedding)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
             """, (
+                db_session_id,
                 filepath, item.get("file_type", "unknown"),
-                psycopg2.Binary(binary_data) if binary_data else None,
-                transcript, Json(meta), transcript_emb,
+                storage_path, transcript, Json(meta), transcript_emb,
             ))
             total_inserted += 1
 
-        # ----- 3. Structured Files -----
+        # ----- 3. Structured Files (schema + samples, not full content) -----
         for item in structured:
             filepath = item["filepath"]
-            content = item.get("content", "")
             meta = metadata_map.get(filepath, {})
             meta["column_names"] = item.get("column_names", [])
             meta["row_count"] = item.get("row_count", 0)
             meta["dtypes"] = item.get("dtypes", {})
 
+            # Store original file on disk for pandas execution later
+            storage_path = None
+            if db_session_id:
+                disk_path, disk_err = _store_media_on_disk(filepath, db_session_id)
+                if disk_path:
+                    storage_path = disk_path
+                else:
+                    meta["storage_error"] = disk_err
+
+            # Build embedding from schema description
+            schema_desc = item.get("schema_description", "")
             summary_text = (
                 f"File: {os.path.basename(filepath)}. "
                 f"Columns: {', '.join(item.get('column_names', []))}. "
@@ -1018,17 +1008,36 @@ def vectorize_and_store(state):
 
             cur.execute("""
                 INSERT INTO structured_files
-                    (filepath, file_type, content, column_names,
-                     row_count, metadata, summary_embedding)
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    (session_id, filepath, file_type, storage_path,
+                     schema_description, sample_rows, column_names,
+                     dtypes, row_count, metadata, summary_embedding)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """, (
+                db_session_id,
                 filepath, item.get("file_type", "csv"),
-                content, Json(item.get("column_names", [])),
-                item.get("row_count", 0), Json(meta), summary_emb,
+                storage_path,
+                schema_desc,
+                Json(item.get("sample_rows", [])),
+                Json(item.get("column_names", [])),
+                Json(item.get("dtypes", {})),
+                item.get("row_count", 0),
+                Json(meta), summary_emb,
             ))
             total_inserted += 1
 
         conn.commit()
+
+        # Update the session record with final counts
+        if db_session_id:
+            cur.execute("""
+                UPDATE ingestion_sessions
+                SET status = 'complete',
+                    records_inserted = %s,
+                    completed_at = NOW()
+                WHERE id = %s
+            """, (total_inserted, db_session_id))
+            conn.commit()
+
         cur.close()
         conn.close()
 
@@ -1036,6 +1045,7 @@ def vectorize_and_store(state):
         if output_dir:
             overview = {
                 "session_id": state.get("session_id"),
+                "db_session_id": db_session_id,
                 "target_path": target_path,
                 "ingestion_timestamp": datetime.datetime.now().isoformat(),
                 "total_records_inserted": total_inserted,
@@ -1050,7 +1060,11 @@ def vectorize_and_store(state):
                     "host": state.get("pg_host"),
                     "port": state.get("pg_port"),
                     "database": state.get("pg_database"),
-                    "tables": ["document_chunks", "media_files", "structured_files"],
+                    "tables": [
+                        "ingestion_sessions", "document_chunks",
+                        "media_files", "structured_files",
+                        "conversations", "chat_messages",
+                    ],
                 },
                 "project_tree": state.get("project_tree", ""),
             }
@@ -1064,6 +1078,7 @@ def vectorize_and_store(state):
                 f.write("  RAG Pipeline -- Processed Output\n")
                 f.write("=" * 60 + "\n\n")
                 f.write(f"Source:     {target_path}\n")
+                f.write(f"Session:    {db_session_id}\n")
                 f.write(f"Timestamp:  {overview['ingestion_timestamp']}\n")
                 f.write(f"Records:    {total_inserted} inserted into PostgreSQL\n\n")
                 f.write("FOLDER STRUCTURE:\n" + "-" * 40 + "\n")
@@ -1085,4 +1100,19 @@ def vectorize_and_store(state):
         }, cmd_str)
 
     except Exception as e:
+        # Mark session as failed if it was created
+        if db_session_id:
+            try:
+                fail_conn = get_connection_from_state(state)
+                fail_conn.autocommit = True
+                fail_cur = fail_conn.cursor()
+                fail_cur.execute(
+                    "UPDATE ingestion_sessions SET status = 'failed' WHERE id = %s",
+                    (db_session_id,),
+                )
+                fail_cur.close()
+                fail_conn.close()
+            except Exception:
+                pass
+
         return _error_return(state, step_name, str(e), cmd_str)

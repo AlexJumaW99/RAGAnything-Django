@@ -1,8 +1,9 @@
 # ingest_and_chat/services.py
 """
-Business logic layer: ingestion orchestration and RAG query engine.
+Business logic layer: ingestion orchestration.
 
-These are called by the Django views and keep the view layer thin.
+The RAG query / chat engine has been moved to chat.py.
+This module handles only the ingestion pipeline execution.
 """
 
 import os
@@ -131,6 +132,7 @@ def run_ingestion_stream(target_path):
                 "pg_username": PG_USERNAME,
                 "pg_password": PG_PASSWORD,
                 "pg_database": PG_DATABASE,
+                "db_session_id": None,
                 "records_inserted": 0,
                 "current_step": None,
                 "steps_completed": [],
@@ -165,7 +167,7 @@ def run_ingestion_stream(target_path):
                 def isatty(self):
                     return False
                 def __getattr__(self, name):
-                    return getattr(self.original, os.name)
+                    return getattr(self.original, name)
 
             sys.stdout = TeeWriter(old_stdout, captured, emit)
 
@@ -187,6 +189,7 @@ def run_ingestion_stream(target_path):
                 emit("complete", {
                     "message": "Ingestion completed successfully",
                     "session_id": thread_id,
+                    "db_session_id": final_state.get("db_session_id"),
                     "records_inserted": final_state.get("records_inserted", 0),
                     "steps_completed": final_state.get("steps_completed", []),
                     "file_counts": file_counts,
@@ -222,160 +225,5 @@ def run_ingestion_stream(target_path):
             parsed = json.loads(msg)
             if parsed.get("event") == "done":
                 break
-        except queue.Empty:
+        except Exception:
             yield f"data: {json.dumps({'event': 'keepalive', 'data': {}})}\n"
-
-
-# ---------------------------------------------------------------------------
-# RAG Query
-# ---------------------------------------------------------------------------
-
-def query_rag(question):
-    """
-    Embed question, search pgvector, ask LLM, return answer + sources.
-
-    Returns a dict:
-        {"answer": str, "sources": list[dict], "tables_searched": list[str]}
-    """
-    import psycopg2
-    from .config import (
-        get_llm, get_embedding_model,
-        PG_HOST, PG_PORT, PG_USERNAME, PG_PASSWORD, PG_DATABASE,
-    )
-
-    llm = get_llm()
-    embedding_model = get_embedding_model()
-
-    conn = psycopg2.connect(
-        host=PG_HOST, port=PG_PORT, user=PG_USERNAME,
-        password=PG_PASSWORD, dbname=PG_DATABASE, connect_timeout=10,
-    )
-
-    # Check which tables exist
-    cur = conn.cursor()
-    cur.execute("""
-        SELECT table_name FROM information_schema.tables
-        WHERE table_schema = 'public'
-        AND table_name IN ('document_chunks', 'media_files', 'structured_files')
-    """)
-    existing_tables = {row[0] for row in cur.fetchall()}
-    cur.close()
-
-    if not existing_tables:
-        conn.close()
-        return {
-            "answer": None,
-            "error": "No RAG tables found. Run an ingestion first.",
-            "sources": [],
-            "tables_searched": [],
-        }
-
-    # Embed the query
-    query_embedding = embedding_model.encode(question).tolist()
-    formatted_emb = f"[{','.join(map(str, query_embedding))}]"
-
-    retrieved_chunks = []
-    cur = conn.cursor()
-
-    if "document_chunks" in existing_tables:
-        cur.execute("""
-            SELECT filepath, content, metadata,
-                   1 - (embedding <=> %s::vector) AS similarity
-            FROM document_chunks
-            ORDER BY embedding <=> %s::vector
-            LIMIT 5
-        """, (formatted_emb, formatted_emb))
-        for row in cur.fetchall():
-            retrieved_chunks.append({
-                "source": row[0], "content": row[1],
-                "metadata": row[2] if isinstance(row[2], dict) else {},
-                "similarity": round(float(row[3]), 4),
-                "table": "document_chunks",
-            })
-
-    if "media_files" in existing_tables:
-        cur.execute("""
-            SELECT filepath, transcript, metadata,
-                   1 - (transcript_embedding <=> %s::vector) AS similarity
-            FROM media_files
-            WHERE transcript_embedding IS NOT NULL
-            ORDER BY transcript_embedding <=> %s::vector
-            LIMIT 3
-        """, (formatted_emb, formatted_emb))
-        for row in cur.fetchall():
-            retrieved_chunks.append({
-                "source": row[0], "content": row[1] or "",
-                "metadata": row[2] if isinstance(row[2], dict) else {},
-                "similarity": round(float(row[3]), 4),
-                "table": "media_files",
-            })
-
-    if "structured_files" in existing_tables:
-        cur.execute("""
-            SELECT filepath, content, metadata,
-                   1 - (summary_embedding <=> %s::vector) AS similarity
-            FROM structured_files
-            WHERE summary_embedding IS NOT NULL
-            ORDER BY summary_embedding <=> %s::vector
-            LIMIT 2
-        """, (formatted_emb, formatted_emb))
-        for row in cur.fetchall():
-            retrieved_chunks.append({
-                "source": row[0],
-                "content": row[1][:2000] if row[1] else "",
-                "metadata": row[2] if isinstance(row[2], dict) else {},
-                "similarity": round(float(row[3]), 4),
-                "table": "structured_files",
-            })
-
-    cur.close()
-    conn.close()
-
-    if not retrieved_chunks:
-        return {
-            "answer": "No relevant results found in the knowledge base.",
-            "sources": [],
-            "tables_searched": list(existing_tables),
-        }
-
-    retrieved_chunks.sort(key=lambda x: x["similarity"], reverse=True)
-
-    # Build context for LLM
-    context_parts = []
-    for i, chunk in enumerate(retrieved_chunks, 1):
-        context_parts.append(
-            f"[Source {i}] (similarity: {chunk['similarity']}) -- {chunk['source']}\n"
-            f"{chunk['content'][:1500]}"
-        )
-    context_block = "\n\n---\n\n".join(context_parts)
-
-    rag_prompt = (
-        "You are a helpful assistant answering questions based on retrieved documents.\n"
-        "Use ONLY the context below to answer. If the context doesn't contain enough "
-        "information, say so.\nCite which source(s) you used by referencing [Source N].\n\n"
-        f"--- RETRIEVED CONTEXT ---\n{context_block}\n\n"
-        f"--- USER QUESTION ---\n{question}\n\n"
-        "Provide a clear, concise answer:"
-    )
-
-    try:
-        response = llm.invoke(rag_prompt)
-        answer = response.content
-    except Exception as e:
-        answer = f"LLM error: {str(e)}"
-
-    sources = []
-    for i, chunk in enumerate(retrieved_chunks, 1):
-        sources.append({
-            "index": i,
-            "source": chunk["source"],
-            "similarity": chunk["similarity"],
-            "table": chunk["table"],
-            "preview": (chunk["content"][:200] + "...") if len(chunk["content"]) > 200 else chunk["content"],
-        })
-
-    return {
-        "answer": answer,
-        "sources": sources,
-        "tables_searched": list(existing_tables),
-    }

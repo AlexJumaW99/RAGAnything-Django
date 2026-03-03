@@ -88,6 +88,25 @@ LOGS_ROOT = _setting(
 )
 
 # ---------------------------------------------------------------------------
+# Media Storage — binary files stored on disk instead of BYTEA
+# ---------------------------------------------------------------------------
+MEDIA_STORAGE_ROOT = _setting(
+    "MEDIA_STORAGE_ROOT",
+    "MEDIA_STORAGE_ROOT",
+    os.path.join(settings.BASE_DIR, "Media_Storage"),
+)
+
+# ---------------------------------------------------------------------------
+# Chat / Query Configuration
+# ---------------------------------------------------------------------------
+CHAT_HISTORY_LIMIT = int(_setting("CHAT_HISTORY_LIMIT", "CHAT_HISTORY_LIMIT", 20))
+PANDAS_EXEC_TIMEOUT = int(_setting("PANDAS_EXEC_TIMEOUT", "PANDAS_EXEC_TIMEOUT", 30))
+
+# Hybrid search weights (vector_weight + text_weight should equal 1.0)
+HYBRID_VECTOR_WEIGHT = float(_setting("HYBRID_VECTOR_WEIGHT", "HYBRID_VECTOR_WEIGHT", 0.7))
+HYBRID_TEXT_WEIGHT = float(_setting("HYBRID_TEXT_WEIGHT", "HYBRID_TEXT_WEIGHT", 0.3))
+
+# ---------------------------------------------------------------------------
 # File Type Classifications
 # ---------------------------------------------------------------------------
 TEXT_EXTENSIONS = {".md", ".txt", ".rst", ".html", ".htm", ".log", ".tex"}
