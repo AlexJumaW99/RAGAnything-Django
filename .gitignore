@@ -2,3 +2,7 @@ Processed_Output/
 Logs/
 *.env
 Media_Storage/
+db.sqlite3
+Uploads/
+__pycache__/
+*.pyc
