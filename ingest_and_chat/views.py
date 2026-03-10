@@ -4,6 +4,8 @@ Django views:
     GET  /                  - Ingestion dashboard UI
     GET  /health/           - Health check
     POST /ingest/           - Run ingestion (SSE streaming response)
+                              Accepts JSON {"target_path": "..."} OR
+                              multipart file uploads
     POST /stop/             - Cancel running ingestion
 
     # Sessions
@@ -20,8 +22,12 @@ Django views:
 
 import os
 import json
+import uuid
+import shutil
 import logging
+import tempfile
 
+from django.conf import settings
 from django.http import JsonResponse, StreamingHttpResponse, HttpResponse
 from django.shortcuts import render
 from django.views.decorators.csrf import csrf_exempt
@@ -31,6 +37,14 @@ from . import services
 from . import chat as chat_service
 
 logger = logging.getLogger("ingest_and_chat")
+
+# ---------------------------------------------------------------------------
+# Upload directory (for browser file uploads)
+# ---------------------------------------------------------------------------
+UPLOAD_ROOT = getattr(settings, "INGEST_AND_CHAT", {}).get(
+    "UPLOAD_ROOT",
+    os.environ.get("UPLOAD_ROOT", os.path.join(settings.BASE_DIR, "Uploads")),
+)
 
 
 # ---------------------------------------------------------------------------
@@ -65,6 +79,87 @@ def _parse_body(request):
         return body, None
     except (json.JSONDecodeError, ValueError):
         return None, _json_error("Invalid JSON body.")
+
+
+# ---------------------------------------------------------------------------
+# File Upload Helper
+# ---------------------------------------------------------------------------
+
+def _save_uploaded_files(request) -> tuple:
+    """
+    Save uploaded files from a multipart request to a temporary directory,
+    preserving directory structure when relative paths are provided.
+
+    The frontend sends two parallel form arrays:
+      - "files": the actual file blobs
+      - "relative_paths": the relative path for each file (e.g. "project/src/main.py")
+
+    When relative_paths are present, files are placed in their original
+    directory structure. Otherwise they're saved flat.
+
+    Returns (upload_dir_path, error_message).
+    If successful, error_message is None.
+    """
+    files = request.FILES.getlist("files")
+    if not files:
+        return None, "No files were uploaded."
+
+    # Get relative paths (one per file, in matching order)
+    relative_paths = request.POST.getlist("relative_paths")
+
+    # Create a unique upload directory
+    upload_id = uuid.uuid4().hex[:12]
+    upload_dir = os.path.join(UPLOAD_ROOT, f"upload_{upload_id}")
+    os.makedirs(upload_dir, exist_ok=True)
+
+    try:
+        for i, uploaded_file in enumerate(files):
+            # Determine the destination path
+            if i < len(relative_paths) and relative_paths[i]:
+                # Use the relative path from the frontend
+                rel_path = relative_paths[i]
+                # Security: sanitize to prevent directory traversal
+                # Remove any leading slashes or .. components
+                parts = rel_path.replace("\\", "/").split("/")
+                safe_parts = [
+                    p for p in parts
+                    if p and p != ".." and p != "." and not p.startswith("~")
+                ]
+                if not safe_parts:
+                    safe_parts = [uploaded_file.name or f"unnamed_{uuid.uuid4().hex[:8]}"]
+                rel_path = os.path.join(*safe_parts)
+            else:
+                # Flat file — just use the filename
+                filename = os.path.basename(uploaded_file.name or "")
+                if not filename:
+                    filename = f"unnamed_{uuid.uuid4().hex[:8]}"
+                rel_path = filename
+
+            dest_path = os.path.join(upload_dir, rel_path)
+
+            # Create parent directories
+            os.makedirs(os.path.dirname(dest_path), exist_ok=True)
+
+            # Handle name collisions
+            if os.path.exists(dest_path):
+                name, ext = os.path.splitext(dest_path)
+                dest_path = f"{name}_{uuid.uuid4().hex[:6]}{ext}"
+
+            with open(dest_path, "wb") as f:
+                for chunk in uploaded_file.chunks():
+                    f.write(chunk)
+
+            logger.info("Saved uploaded file: %s -> %s", rel_path, dest_path)
+
+        return upload_dir, None
+
+    except Exception as e:
+        # Clean up on failure
+        try:
+            shutil.rmtree(upload_dir, ignore_errors=True)
+        except Exception:
+            pass
+        return None, f"Failed to save uploaded files: {str(e)}"
 
 
 # ---------------------------------------------------------------------------
@@ -104,23 +199,43 @@ def health(request):
 
 @csrf_exempt
 def ingest(request):
-    """Run the full RAG ingestion pipeline (SSE stream)."""
+    """
+    Run the full RAG ingestion pipeline (SSE stream).
+
+    Accepts EITHER:
+      - JSON body: {"target_path": "/absolute/path/to/files"}
+      - Multipart form: files uploaded via browser file picker
+    """
     if request.method == "OPTIONS":
         return _options_response()
     if request.method != "POST":
         return _json_error("Method not allowed.", 405)
 
-    body, err = _parse_body(request)
-    if err:
-        return err
-
-    target_path = body.get("target_path", "").strip()
-    if not target_path:
-        return _json_error("target_path is required.")
-    if not os.path.exists(target_path):
-        return _json_error(f"Path does not exist: {target_path}")
     if services.is_ingestion_running():
         return _json_error("An ingestion is already running.", 409)
+
+    target_path = None
+    is_upload = False
+
+    # Check if this is a multipart file upload
+    if request.content_type and "multipart" in request.content_type:
+        upload_dir, upload_err = _save_uploaded_files(request)
+        if upload_err:
+            return _json_error(upload_err)
+        target_path = upload_dir
+        is_upload = True
+        logger.info("File upload ingestion: %d file(s) saved to %s",
+                     len(request.FILES.getlist("files")), upload_dir)
+    else:
+        # JSON body with target_path
+        body, err = _parse_body(request)
+        if err:
+            return err
+        target_path = body.get("target_path", "").strip()
+        if not target_path:
+            return _json_error("target_path is required.")
+        if not os.path.exists(target_path):
+            return _json_error(f"Path does not exist: {target_path}")
 
     response = StreamingHttpResponse(
         services.run_ingestion_stream(target_path),

@@ -169,6 +169,45 @@
         margin-bottom: 24px;
       }
 
+      /* ── Mode Tabs ────────────────────────────────────── */
+      .mode-tabs {
+        display: flex;
+        gap: 0;
+        margin-bottom: 20px;
+        border: 1px solid var(--border);
+        border-radius: var(--radius-sm);
+        overflow: hidden;
+        width: fit-content;
+      }
+      .mode-tab {
+        font-family: var(--font);
+        font-size: 0.82rem;
+        font-weight: 500;
+        padding: 8px 20px;
+        border: none;
+        background: var(--bg);
+        color: var(--text-2);
+        cursor: pointer;
+        transition: all var(--ease);
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+      .mode-tab:not(:last-child) {
+        border-right: 1px solid var(--border);
+      }
+      .mode-tab.active {
+        background: var(--accent);
+        color: white;
+      }
+      .mode-tab:not(.active):hover {
+        background: var(--surface-hover);
+      }
+      .mode-tab svg {
+        width: 14px;
+        height: 14px;
+      }
+
       /* ── Input Row ────────────────────────────────────── */
       .input-row {
         display: flex;
@@ -244,6 +283,147 @@
         color: var(--text-3);
         margin-top: 10px;
         line-height: 1.5;
+      }
+
+      /* ── Drop Zone ────────────────────────────────────── */
+      .upload-mode,
+      .path-mode {
+        display: none;
+      }
+      .upload-mode.active,
+      .path-mode.active {
+        display: block;
+      }
+
+      .drop-zone {
+        border: 2px dashed var(--border);
+        border-radius: var(--radius);
+        padding: 40px 24px;
+        text-align: center;
+        cursor: pointer;
+        transition: all var(--ease);
+        background: var(--bg);
+        position: relative;
+      }
+      .drop-zone:hover {
+        border-color: var(--accent);
+        background: var(--accent-light);
+      }
+      .drop-zone.drag-over {
+        border-color: var(--accent);
+        background: var(--accent-light);
+        box-shadow: 0 0 0 4px rgba(13, 148, 136, 0.1);
+      }
+      .drop-zone.has-files {
+        border-style: solid;
+        border-color: var(--accent);
+        background: var(--accent-light);
+        padding: 20px 24px;
+      }
+      .drop-zone-icon {
+        margin-bottom: 12px;
+        color: var(--text-3);
+        transition: color var(--ease);
+      }
+      .drop-zone:hover .drop-zone-icon,
+      .drop-zone.drag-over .drop-zone-icon {
+        color: var(--accent);
+      }
+      .drop-zone-text {
+        font-size: 0.93rem;
+        font-weight: 500;
+        color: var(--text-2);
+        margin-bottom: 4px;
+      }
+      .drop-zone-subtext {
+        font-size: 0.78rem;
+        color: var(--text-3);
+      }
+      .drop-zone-subtext a {
+        color: var(--accent);
+        font-weight: 500;
+        text-decoration: none;
+      }
+      .drop-zone-subtext a:hover {
+        text-decoration: underline;
+      }
+
+      /* File list inside drop zone */
+      .file-list {
+        text-align: left;
+        margin-top: 12px;
+      }
+      .file-item {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 8px 12px;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-sm);
+        margin-bottom: 6px;
+        font-size: 0.82rem;
+        animation: slideUp 0.2s ease both;
+      }
+      .file-item-left {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        min-width: 0;
+      }
+      .file-item-icon {
+        color: var(--accent);
+        flex-shrink: 0;
+      }
+      .file-item-name {
+        font-family: var(--mono);
+        font-size: 0.78rem;
+        color: var(--text-1);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .file-item-size {
+        font-size: 0.72rem;
+        color: var(--text-3);
+        flex-shrink: 0;
+        margin-left: 8px;
+      }
+      .file-item-remove {
+        background: none;
+        border: none;
+        color: var(--text-3);
+        cursor: pointer;
+        padding: 2px 6px;
+        border-radius: 4px;
+        font-size: 0.78rem;
+        transition: all var(--ease);
+        flex-shrink: 0;
+      }
+      .file-item-remove:hover {
+        color: var(--error);
+        background: var(--error-bg);
+      }
+
+      .upload-actions {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+        margin-top: 16px;
+      }
+      .file-count-badge {
+        font-size: 0.78rem;
+        color: var(--text-2);
+        font-weight: 500;
+      }
+
+      /* Hidden native file input */
+      .file-input-hidden {
+        position: absolute;
+        width: 0;
+        height: 0;
+        opacity: 0;
+        pointer-events: none;
       }
 
       /* ── Pipeline Steps ───────────────────────────────── */
@@ -595,39 +775,167 @@
         </div>
       </header>
 
-      <!-- ─── Path Input ──────────────────────────────── -->
+      <!-- ─── Input Card ──────────────────────────────── -->
       <div class="card">
-        <div class="section-label">Target Path</div>
-        <div class="input-row">
-          <input
-            type="text"
-            class="path-input"
-            id="pathInput"
-            placeholder="/home/user/documents/my-project"
-            spellcheck="false"
-            autocomplete="off"
-          />
+        <!-- Mode Tabs -->
+        <div class="mode-tabs">
           <button
-            class="btn btn-primary"
-            id="ingestBtn"
-            onclick="startIngestion()"
+            class="mode-tab active"
+            id="tabUpload"
+            onclick="switchMode('upload')"
           >
             <svg
-              width="16"
-              height="16"
               viewBox="0 0 24 24"
               fill="none"
               stroke="currentColor"
-              stroke-width="2.5"
+              stroke-width="2"
               stroke-linecap="round"
               stroke-linejoin="round"
             >
-              <polyline points="16 16 12 12 8 16" />
-              <line x1="12" y1="12" x2="12" y2="21" />
-              <path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3" />
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+              <polyline points="17 8 12 3 7 8" />
+              <line x1="12" y1="3" x2="12" y2="15" />
             </svg>
-            Ingest
+            Upload Files
           </button>
+          <button class="mode-tab" id="tabPath" onclick="switchMode('path')">
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path
+                d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"
+              />
+            </svg>
+            Server Path
+          </button>
+        </div>
+
+        <!-- Upload Mode -->
+        <div class="upload-mode active" id="uploadMode">
+          <!-- Hidden file inputs: one for files, one for folders -->
+          <input
+            type="file"
+            class="file-input-hidden"
+            id="fileInput"
+            multiple
+          />
+          <input
+            type="file"
+            class="file-input-hidden"
+            id="folderInput"
+            webkitdirectory
+            multiple
+          />
+
+          <div class="drop-zone" id="dropZone">
+            <div class="drop-zone-icon">
+              <svg
+                width="40"
+                height="40"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.5"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                <polyline points="17 8 12 3 7 8" />
+                <line x1="12" y1="3" x2="12" y2="15" />
+              </svg>
+            </div>
+            <div class="drop-zone-text" id="dropText">
+              Drop files or folders here to ingest
+            </div>
+            <div class="drop-zone-subtext">
+              <a href="#" id="browseFilesLink">Browse files</a>
+              &nbsp;or&nbsp;
+              <a href="#" id="browseFolderLink">browse a folder</a>
+            </div>
+            <div class="input-hint" style="margin-top: 12px">
+              Supports code, text, PDF, DOCX, PPTX, CSV/XLSX, images, and audio.
+              Folder uploads preserve directory structure.
+            </div>
+
+            <!-- File list (shown when files are selected) -->
+            <div class="file-list hidden" id="fileList"></div>
+          </div>
+
+          <div class="upload-actions hidden" id="uploadActions">
+            <button
+              class="btn btn-primary"
+              id="uploadIngestBtn"
+              onclick="startUploadIngestion()"
+            >
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2.5"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <polyline points="16 16 12 12 8 16" />
+                <line x1="12" y1="12" x2="12" y2="21" />
+                <path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3" />
+              </svg>
+              Ingest
+            </button>
+            <button class="btn btn-danger" onclick="clearFiles()">
+              Clear All
+            </button>
+            <span class="file-count-badge" id="fileCountBadge"></span>
+          </div>
+        </div>
+
+        <!-- Path Mode -->
+        <div class="path-mode" id="pathMode">
+          <div class="section-label">Target Path</div>
+          <div class="input-row">
+            <input
+              type="text"
+              class="path-input"
+              id="pathInput"
+              placeholder="/home/user/documents/my-project"
+              spellcheck="false"
+              autocomplete="off"
+            />
+            <button
+              class="btn btn-primary"
+              id="ingestBtn"
+              onclick="startIngestion()"
+            >
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2.5"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <polyline points="16 16 12 12 8 16" />
+                <line x1="12" y1="12" x2="12" y2="21" />
+                <path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3" />
+              </svg>
+              Ingest
+            </button>
+          </div>
+          <div class="input-hint">
+            Enter an absolute path on the server — a file or directory.
+          </div>
+        </div>
+
+        <!-- Stop button (shared between both modes) -->
+        <div style="margin-top: 12px">
           <button
             class="btn btn-danger hidden"
             id="stopBtn"
@@ -638,10 +946,6 @@
             </svg>
             Stop
           </button>
-        </div>
-        <div class="input-hint">
-          Enter an absolute path on the server — a file or directory. Supports
-          code, text, PDF, DOCX, PPTX, CSV/XLSX, images, and audio.
         </div>
       </div>
 
@@ -738,6 +1042,17 @@
         const healthBadge = el("healthBadge");
         const healthText = el("healthText");
 
+        // Upload-related refs
+        const fileInput = el("fileInput");
+        const dropZone = el("dropZone");
+        const fileList = el("fileList");
+        const uploadActions = el("uploadActions");
+        const uploadIngestBtn = el("uploadIngestBtn");
+        const fileCountBadge = el("fileCountBadge");
+        const browseFilesLink = el("browseFilesLink");
+        const browseFolderLink = el("browseFolderLink");
+        const folderInput = el("folderInput");
+
         // ── Constants ──────────────────────────────────────
         const STEPS = [
           "read_and_classify_files",
@@ -749,7 +1064,6 @@
           "vectorize_and_store",
         ];
 
-        // Keywords that signal a node just finished
         const DONE_KEYWORDS = [
           "classified",
           "processed",
@@ -764,7 +1078,19 @@
         ];
 
         let isRunning = false;
-        let controller = null; // AbortController
+        let controller = null;
+        // Each entry: { file: File, relativePath: string }
+        let selectedFiles = [];
+        let currentMode = "upload"; // "upload" or "path"
+
+        // ── Mode Switching ─────────────────────────────────
+        window.switchMode = function (mode) {
+          currentMode = mode;
+          el("tabUpload").classList.toggle("active", mode === "upload");
+          el("tabPath").classList.toggle("active", mode === "path");
+          el("uploadMode").classList.toggle("active", mode === "upload");
+          el("pathMode").classList.toggle("active", mode === "path");
+        };
 
         // ── Health ─────────────────────────────────────────
         async function checkHealth() {
@@ -883,8 +1209,9 @@
           isRunning = v;
           pathInput.disabled = v;
           ingestBtn.disabled = v;
-          ingestBtn.classList.toggle("hidden", v);
+          uploadIngestBtn.disabled = v;
           stopBtn.classList.toggle("hidden", !v);
+
           if (v) {
             pipelineCard.classList.remove("hidden");
             logCard.classList.remove("hidden");
@@ -894,7 +1221,394 @@
           }
         }
 
-        // ── Start ingestion ────────────────────────────────
+        // ── File size formatter ────────────────────────────
+        function formatSize(bytes) {
+          if (bytes < 1024) return bytes + " B";
+          if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + " KB";
+          return (bytes / (1024 * 1024)).toFixed(1) + " MB";
+        }
+
+        // ── File Upload Logic ──────────────────────────────
+
+        // Browse links
+        browseFilesLink.addEventListener("click", function (e) {
+          e.preventDefault();
+          e.stopPropagation();
+          fileInput.click();
+        });
+
+        browseFolderLink.addEventListener("click", function (e) {
+          e.preventDefault();
+          e.stopPropagation();
+          folderInput.click();
+        });
+
+        // Click on drop zone opens file picker (files by default)
+        dropZone.addEventListener("click", function (e) {
+          if (
+            e.target.closest(".file-item") ||
+            e.target.closest(".file-item-remove")
+          )
+            return;
+          if (e.target.closest("a")) return;
+          fileInput.click();
+        });
+
+        // File input change (individual files — no relative path)
+        fileInput.addEventListener("change", function () {
+          const entries = Array.from(fileInput.files).map(function (f) {
+            return { file: f, relativePath: f.name };
+          });
+          addFileEntries(entries);
+          fileInput.value = "";
+        });
+
+        // Folder input change (webkitdirectory — has webkitRelativePath)
+        folderInput.addEventListener("change", function () {
+          const entries = Array.from(folderInput.files)
+            .filter(function (f) {
+              // Skip hidden files and common junk directories
+              var parts = (f.webkitRelativePath || f.name).split("/");
+              return !parts.some(function (p) {
+                return (
+                  p.startsWith(".") ||
+                  p === "__pycache__" ||
+                  p === "node_modules" ||
+                  p === ".git"
+                );
+              });
+            })
+            .map(function (f) {
+              return {
+                file: f,
+                relativePath: f.webkitRelativePath || f.name,
+              };
+            });
+          addFileEntries(entries);
+          folderInput.value = "";
+        });
+
+        // ── Drag & Drop (supports both files and folders) ──
+        dropZone.addEventListener("dragover", function (e) {
+          e.preventDefault();
+          dropZone.classList.add("drag-over");
+        });
+        dropZone.addEventListener("dragleave", function (e) {
+          e.preventDefault();
+          dropZone.classList.remove("drag-over");
+        });
+        dropZone.addEventListener("drop", function (e) {
+          e.preventDefault();
+          dropZone.classList.remove("drag-over");
+
+          var items = e.dataTransfer.items;
+          if (items && items.length > 0) {
+            // Check if any item is a directory using webkitGetAsEntry
+            var hasEntryAPI =
+              items[0] && typeof items[0].webkitGetAsEntry === "function";
+            if (hasEntryAPI) {
+              var entryPromises = [];
+              for (var i = 0; i < items.length; i++) {
+                var entry = items[i].webkitGetAsEntry();
+                if (entry) {
+                  entryPromises.push(traverseEntry(entry, ""));
+                }
+              }
+              Promise.all(entryPromises).then(function (results) {
+                var flat = results.reduce(function (a, b) {
+                  return a.concat(b);
+                }, []);
+                addFileEntries(flat);
+              });
+              return;
+            }
+          }
+          // Fallback: plain file list (no directory support)
+          if (e.dataTransfer.files.length) {
+            var entries = Array.from(e.dataTransfer.files).map(function (f) {
+              return { file: f, relativePath: f.name };
+            });
+            addFileEntries(entries);
+          }
+        });
+
+        /**
+         * Recursively traverse a FileSystemEntry (file or directory).
+         * Returns a Promise that resolves to an array of {file, relativePath}.
+         */
+        function traverseEntry(entry, parentPath) {
+          return new Promise(function (resolve) {
+            if (entry.isFile) {
+              entry.file(
+                function (f) {
+                  var relPath = parentPath
+                    ? parentPath + "/" + entry.name
+                    : entry.name;
+                  // Skip hidden files
+                  if (entry.name.startsWith(".")) {
+                    resolve([]);
+                  } else {
+                    resolve([{ file: f, relativePath: relPath }]);
+                  }
+                },
+                function () {
+                  resolve([]);
+                },
+              );
+            } else if (entry.isDirectory) {
+              // Skip hidden / junk directories
+              var skipDirs = [
+                ".git",
+                "__pycache__",
+                "node_modules",
+                ".venv",
+                "venv",
+              ];
+              if (
+                entry.name.startsWith(".") ||
+                skipDirs.indexOf(entry.name) !== -1
+              ) {
+                resolve([]);
+                return;
+              }
+              var dirPath = parentPath
+                ? parentPath + "/" + entry.name
+                : entry.name;
+              var reader = entry.createReader();
+              var allEntries = [];
+
+              // readEntries may return results in batches
+              function readBatch() {
+                reader.readEntries(
+                  function (batch) {
+                    if (batch.length === 0) {
+                      // All entries read — recurse into each
+                      Promise.all(
+                        allEntries.map(function (e) {
+                          return traverseEntry(e, dirPath);
+                        }),
+                      ).then(function (results) {
+                        resolve(
+                          results.reduce(function (a, b) {
+                            return a.concat(b);
+                          }, []),
+                        );
+                      });
+                    } else {
+                      allEntries = allEntries.concat(Array.from(batch));
+                      readBatch();
+                    }
+                  },
+                  function () {
+                    resolve([]);
+                  },
+                );
+              }
+              readBatch();
+            } else {
+              resolve([]);
+            }
+          });
+        }
+
+        // ── File list management ───────────────────────────
+
+        function addFileEntries(newEntries) {
+          for (var i = 0; i < newEntries.length; i++) {
+            var entry = newEntries[i];
+            var exists = selectedFiles.some(function (sf) {
+              return (
+                sf.relativePath === entry.relativePath &&
+                sf.file.size === entry.file.size
+              );
+            });
+            if (!exists) {
+              selectedFiles.push(entry);
+            }
+          }
+          renderFileList();
+        }
+
+        window.clearFiles = function () {
+          selectedFiles = [];
+          renderFileList();
+        };
+
+        function removeFile(index) {
+          selectedFiles.splice(index, 1);
+          renderFileList();
+        }
+
+        function renderFileList() {
+          if (selectedFiles.length === 0) {
+            fileList.classList.add("hidden");
+            uploadActions.classList.add("hidden");
+            dropZone.classList.remove("has-files");
+            el("dropText").textContent = "Drop files or folders here to ingest";
+            return;
+          }
+
+          dropZone.classList.add("has-files");
+          el("dropText").textContent =
+            selectedFiles.length +
+            " file" +
+            (selectedFiles.length !== 1 ? "s" : "") +
+            " selected";
+          fileList.classList.remove("hidden");
+          uploadActions.classList.remove("hidden");
+
+          var totalSize = selectedFiles.reduce(function (s, e) {
+            return s + e.file.size;
+          }, 0);
+
+          // Count unique top-level directories
+          var dirs = new Set();
+          selectedFiles.forEach(function (e) {
+            var parts = e.relativePath.split("/");
+            if (parts.length > 1) dirs.add(parts[0]);
+          });
+          var badge =
+            selectedFiles.length +
+            " file" +
+            (selectedFiles.length !== 1 ? "s" : "");
+          if (dirs.size > 0) {
+            badge +=
+              " in " + dirs.size + " folder" + (dirs.size !== 1 ? "s" : "");
+          }
+          badge += " \u00B7 " + formatSize(totalSize);
+          fileCountBadge.textContent = badge;
+
+          fileList.innerHTML = "";
+
+          // Show max 50 items in the list to avoid DOM overload
+          var displayLimit = 50;
+          var showAll = selectedFiles.length <= displayLimit;
+          var filesToShow = showAll
+            ? selectedFiles
+            : selectedFiles.slice(0, displayLimit);
+
+          filesToShow.forEach(function (entry, i) {
+            var item = document.createElement("div");
+            item.className = "file-item";
+            item.style.animationDelay = Math.min(i * 20, 300) + "ms";
+
+            // Show relative path if it contains a directory, otherwise just name
+            var displayName = entry.relativePath.includes("/")
+              ? entry.relativePath
+              : entry.file.name;
+
+            item.innerHTML =
+              '<div class="file-item-left">' +
+              '<svg class="file-item-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">' +
+              (entry.relativePath.includes("/")
+                ? '<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>'
+                : '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/>') +
+              "</svg>" +
+              '<span class="file-item-name" title="' +
+              esc(displayName) +
+              '">' +
+              esc(displayName) +
+              "</span>" +
+              "</div>" +
+              '<div style="display:flex;align-items:center;gap:4px">' +
+              '<span class="file-item-size">' +
+              formatSize(entry.file.size) +
+              "</span>" +
+              '<button class="file-item-remove" data-idx="' +
+              i +
+              '">\u2715</button>' +
+              "</div>";
+            fileList.appendChild(item);
+          });
+
+          if (!showAll) {
+            var moreDiv = document.createElement("div");
+            moreDiv.className = "file-item";
+            moreDiv.style.justifyContent = "center";
+            moreDiv.style.color = "var(--text-3)";
+            moreDiv.style.fontSize = "0.78rem";
+            moreDiv.textContent =
+              "\u2026 and " +
+              (selectedFiles.length - displayLimit) +
+              " more files";
+            fileList.appendChild(moreDiv);
+          }
+
+          // Attach remove handlers
+          fileList
+            .querySelectorAll(".file-item-remove")
+            .forEach(function (btn) {
+              btn.addEventListener("click", function (e) {
+                e.stopPropagation();
+                removeFile(parseInt(this.dataset.idx, 10));
+              });
+            });
+        }
+
+        // ── Upload-based ingestion ─────────────────────────
+        window.startUploadIngestion = async function () {
+          if (selectedFiles.length === 0) return;
+
+          setRunning(true);
+          logBody.innerHTML = "";
+          summarySection.classList.add("hidden");
+          summaryGrid.innerHTML = "";
+          logLine(
+            "Uploading " + selectedFiles.length + " file(s)...",
+            "status",
+          );
+
+          controller = new AbortController();
+          let completed = [];
+
+          try {
+            // Build FormData with files and their relative paths
+            const formData = new FormData();
+            for (const entry of selectedFiles) {
+              formData.append("files", entry.file);
+              formData.append("relative_paths", entry.relativePath);
+            }
+
+            const res = await fetch(API + "ingest/", {
+              method: "POST",
+              body: formData,
+              signal: controller.signal,
+            });
+
+            if (!res.ok) {
+              const err = await res
+                .json()
+                .catch(() => ({ error: "HTTP " + res.status }));
+              throw new Error(err.error || "Server returned " + res.status);
+            }
+
+            logLine("Files uploaded. Streaming pipeline events...", "status");
+
+            const reader = res.body.getReader();
+            const decoder = new TextDecoder();
+            let buf = "";
+
+            while (true) {
+              const { done, value } = await reader.read();
+              if (done) break;
+              buf += decoder.decode(value, { stream: true });
+
+              const lines = buf.split("\n");
+              buf = lines.pop();
+
+              for (const raw of lines) {
+                processSSELine(raw, completed);
+              }
+            }
+          } catch (err) {
+            handleStreamError(err);
+          } finally {
+            setRunning(false);
+            controller = null;
+          }
+        };
+
+        // ── Path-based ingestion ───────────────────────────
         window.startIngestion = async function () {
           const target = pathInput.value.trim();
           if (!target) {
@@ -941,93 +1655,98 @@
               buf = lines.pop();
 
               for (const raw of lines) {
-                let json_str = raw.trim();
-                if (!json_str) continue;
-                if (json_str.startsWith("data: "))
-                  json_str = json_str.substring(6);
-
-                let msg;
-                try {
-                  msg = JSON.parse(json_str);
-                } catch {
-                  continue;
-                }
-
-                const ev = msg.event;
-                const d = msg.data || {};
-
-                if (ev === "status") {
-                  logLine(d.message || "Status update", "status");
-                }
-
-                if (ev === "log") {
-                  logLine(d.text || "", "log");
-                  // Detect step completions from node log output
-                  const t = (d.text || "").toLowerCase();
-                  for (const step of STEPS) {
-                    if (
-                      t.includes("[" + step + "]") &&
-                      DONE_KEYWORDS.some((kw) => t.includes(kw)) &&
-                      !completed.includes(step)
-                    ) {
-                      completed.push(step);
-                      markDone(completed);
-                      activateNext(completed);
-                    }
-                  }
-                }
-
-                if (ev === "complete") {
-                  completed = d.steps_completed || STEPS;
-                  markDone(completed);
-                  if (d.file_counts) showSummary(d.file_counts);
-                  const n = d.records_inserted || 0;
-                  showResult(
-                    true,
-                    "Ingestion Complete",
-                    n +
-                      " record" +
-                      (n !== 1 ? "s" : "") +
-                      " inserted across " +
-                      (d.steps_completed || []).length +
-                      " pipeline steps.",
-                  );
-                  logLine(
-                    "\u2713 Complete \u2014 " + n + " records inserted",
-                    "complete",
-                  );
-                }
-
-                if (ev === "error") {
-                  logLine("\u2715 Error: " + (d.message || "Unknown"), "error");
-                  (d.errors || []).forEach((e) =>
-                    logLine("  \u2192 " + e, "error"),
-                  );
-                  if (d.step) setStep(d.step, "error");
-                  showResult(
-                    false,
-                    "Ingestion Failed",
-                    d.message || "An error occurred during the pipeline.",
-                  );
-                }
-
-                if (ev === "done") {
-                  logLine("\u2014 Stream finished \u2014", "status");
-                }
+                processSSELine(raw, completed);
               }
             }
           } catch (err) {
-            if (err.name === "AbortError") {
-              logLine("Ingestion aborted by user.", "error");
-            } else {
-              logLine("Connection error: " + err.message, "error");
-              showResult(false, "Connection Error", err.message);
-            }
+            handleStreamError(err);
           } finally {
             setRunning(false);
             controller = null;
           }
         };
+
+        // ── Shared SSE processing ──────────────────────────
+        function processSSELine(raw, completed) {
+          let json_str = raw.trim();
+          if (!json_str) return;
+          if (json_str.startsWith("data: ")) json_str = json_str.substring(6);
+
+          let msg;
+          try {
+            msg = JSON.parse(json_str);
+          } catch {
+            return;
+          }
+
+          const ev = msg.event;
+          const d = msg.data || {};
+
+          if (ev === "status") {
+            logLine(d.message || "Status update", "status");
+          }
+
+          if (ev === "log") {
+            logLine(d.text || "", "log");
+            const t = (d.text || "").toLowerCase();
+            for (const step of STEPS) {
+              if (
+                t.includes("[" + step + "]") &&
+                DONE_KEYWORDS.some((kw) => t.includes(kw)) &&
+                !completed.includes(step)
+              ) {
+                completed.push(step);
+                markDone(completed);
+                activateNext(completed);
+              }
+            }
+          }
+
+          if (ev === "complete") {
+            const doneSteps = d.steps_completed || STEPS;
+            markDone(doneSteps);
+            if (d.file_counts) showSummary(d.file_counts);
+            const n = d.records_inserted || 0;
+            showResult(
+              true,
+              "Ingestion Complete",
+              n +
+                " record" +
+                (n !== 1 ? "s" : "") +
+                " inserted across " +
+                (d.steps_completed || []).length +
+                " pipeline steps.",
+            );
+            logLine(
+              "\u2713 Complete \u2014 " + n + " records inserted",
+              "complete",
+            );
+          }
+
+          if (ev === "error") {
+            logLine("\u2715 Error: " + (d.message || "Unknown"), "error");
+            (d.errors || []).forEach((e) => logLine("  \u2192 " + e, "error"));
+            if (d.step) setStep(d.step, "error");
+            showResult(
+              false,
+              "Ingestion Failed",
+              d.message || "An error occurred during the pipeline.",
+            );
+          }
+
+          if (ev === "done") {
+            logLine("\u2014 Stream finished \u2014", "status");
+          }
+        }
+
+        function handleStreamError(err) {
+          if (err.name === "AbortError") {
+            logLine("Ingestion aborted by user.", "error");
+          } else {
+            logLine("Connection error: " + err.message, "error");
+            showResult(false, "Connection Error", err.message);
+          }
+        }
 
         // ── Stop ───────────────────────────────────────────
         window.stopIngestion = async function () {
@@ -1040,7 +1759,7 @@
           logLine("Stop signal sent to server.", "status");
         };
 
-        // ── Enter key ──────────────────────────────────────
+        // ── Enter key for path mode ────────────────────────
         pathInput.addEventListener("keydown", function (e) {
           if (e.key === "Enter" && !isRunning) window.startIngestion();
         });

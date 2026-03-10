@@ -121,3 +121,16 @@ STATIC_URL = 'static/'
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+
+# ---------------------------------------------------------------------------
+# File Upload Limits (for browser-based file ingestion)
+# ---------------------------------------------------------------------------
+# Allow up to 100MB per file in memory before writing to temp file
+FILE_UPLOAD_MAX_MEMORY_SIZE = 100 * 1024 * 1024   # 100 MB
+
+# Allow up to 500MB total upload body size
+DATA_UPLOAD_MAX_MEMORY_SIZE = 500 * 1024 * 1024    # 500 MB
+
+# No limit on the number of POST parameters (files count as parameters)
+DATA_UPLOAD_MAX_NUMBER_FILES = 1000

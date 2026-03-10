@@ -1,2 +1,7 @@
 Processed_Output/
+Logs/
 *.env
+Media_Storage/
+Uploads/
+__pycache__/
+*.pyc

@@ -6,6 +6,7 @@ Provides:
   - Auto-creation of the PostgreSQL database if it doesn't exist
   - Auto-creation of pgvector extension
   - Auto-creation of all tables with correct schema (IF NOT EXISTS)
+  - Auto-migration of missing columns on existing tables
   - Auto-creation of all indexes (B-tree, GIN, HNSW)
   - Thread-safe initialization that runs once per process
   - A get_connection() helper that guarantees the DB is ready
@@ -148,6 +149,86 @@ TABLE_DEFINITIONS = {
 
 
 # ===========================================================================
+# Expected Column Definitions (for migration of existing tables)
+# ===========================================================================
+# Maps table_name -> list of (column_name, column_type_sql, is_generated)
+# This is used to detect and add missing columns on existing tables.
+# Generated columns (like search_vector) need special handling.
+
+EXPECTED_COLUMNS = {
+    "ingestion_sessions": [
+        ("id", "UUID PRIMARY KEY DEFAULT gen_random_uuid()", False),
+        ("name", "TEXT", False),
+        ("target_path", "TEXT NOT NULL DEFAULT ''", False),
+        ("status", "TEXT NOT NULL DEFAULT 'running'", False),
+        ("file_count", "INTEGER DEFAULT 0", False),
+        ("records_inserted", "INTEGER DEFAULT 0", False),
+        ("config", "JSONB", False),
+        ("created_at", "TIMESTAMPTZ DEFAULT NOW()", False),
+        ("completed_at", "TIMESTAMPTZ", False),
+    ],
+    "document_chunks": [
+        ("id", "UUID PRIMARY KEY DEFAULT gen_random_uuid()", False),
+        ("session_id", "UUID REFERENCES ingestion_sessions(id) ON DELETE CASCADE", False),
+        ("filepath", "TEXT NOT NULL DEFAULT ''", False),
+        ("file_type", "TEXT NOT NULL DEFAULT ''", False),
+        ("chunk_index", "INTEGER NOT NULL DEFAULT 0", False),
+        ("total_chunks", "INTEGER NOT NULL DEFAULT 0", False),
+        ("content", "TEXT NOT NULL DEFAULT ''", False),
+        ("metadata", "JSONB", False),
+        ("embedding", "vector(384)", False),
+        ("search_vector", "tsvector GENERATED ALWAYS AS (to_tsvector('english', content)) STORED", True),
+        ("created_at", "TIMESTAMPTZ DEFAULT NOW()", False),
+    ],
+    "media_files": [
+        ("id", "UUID PRIMARY KEY DEFAULT gen_random_uuid()", False),
+        ("session_id", "UUID REFERENCES ingestion_sessions(id) ON DELETE CASCADE", False),
+        ("filepath", "TEXT NOT NULL DEFAULT ''", False),
+        ("file_type", "TEXT NOT NULL DEFAULT ''", False),
+        ("storage_path", "TEXT", False),
+        ("transcript", "TEXT", False),
+        ("metadata", "JSONB", False),
+        ("transcript_embedding", "vector(384)", False),
+        ("search_vector", "tsvector GENERATED ALWAYS AS (to_tsvector('english', COALESCE(transcript, ''))) STORED", True),
+        ("created_at", "TIMESTAMPTZ DEFAULT NOW()", False),
+    ],
+    "structured_files": [
+        ("id", "UUID PRIMARY KEY DEFAULT gen_random_uuid()", False),
+        ("session_id", "UUID REFERENCES ingestion_sessions(id) ON DELETE CASCADE", False),
+        ("filepath", "TEXT NOT NULL DEFAULT ''", False),
+        ("file_type", "TEXT NOT NULL DEFAULT ''", False),
+        ("storage_path", "TEXT", False),
+        ("schema_description", "TEXT", False),
+        ("sample_rows", "JSONB", False),
+        ("column_names", "JSONB", False),
+        ("dtypes", "JSONB", False),
+        ("row_count", "INTEGER", False),
+        ("metadata", "JSONB", False),
+        ("summary_embedding", "vector(384)", False),
+        ("search_vector", "tsvector GENERATED ALWAYS AS (to_tsvector('english', COALESCE(schema_description, ''))) STORED", True),
+        ("created_at", "TIMESTAMPTZ DEFAULT NOW()", False),
+    ],
+    "conversations": [
+        ("id", "UUID PRIMARY KEY DEFAULT gen_random_uuid()", False),
+        ("session_id", "UUID REFERENCES ingestion_sessions(id) ON DELETE SET NULL", False),
+        ("title", "TEXT", False),
+        ("created_at", "TIMESTAMPTZ DEFAULT NOW()", False),
+        ("updated_at", "TIMESTAMPTZ DEFAULT NOW()", False),
+    ],
+    "chat_messages": [
+        ("id", "UUID PRIMARY KEY DEFAULT gen_random_uuid()", False),
+        ("conversation_id", "UUID NOT NULL DEFAULT gen_random_uuid()", False),
+        ("session_id", "UUID REFERENCES ingestion_sessions(id) ON DELETE SET NULL", False),
+        ("role", "TEXT NOT NULL DEFAULT ''", False),
+        ("content", "TEXT NOT NULL DEFAULT ''", False),
+        ("sources", "JSONB", False),
+        ("tool_calls", "JSONB", False),
+        ("created_at", "TIMESTAMPTZ DEFAULT NOW()", False),
+    ],
+}
+
+
+# ===========================================================================
 # Index Definitions
 # ===========================================================================
 
@@ -261,14 +342,85 @@ def _create_database(db_name: str):
 
 
 # ===========================================================================
+# Schema Migration — add missing columns to existing tables
+# ===========================================================================
+
+def _get_existing_columns(cur, table_name: str) -> set:
+    """Return a set of column names that currently exist on a table."""
+    cur.execute("""
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_name = %s
+          AND table_schema = 'public'
+    """, (table_name,))
+    return {row[0] for row in cur.fetchall()}
+
+
+def _table_exists(cur, table_name: str) -> bool:
+    """Check if a table exists in the public schema."""
+    cur.execute("""
+        SELECT 1 FROM information_schema.tables
+        WHERE table_name = %s AND table_schema = 'public'
+    """, (table_name,))
+    return cur.fetchone() is not None
+
+
+def _migrate_missing_columns(cur):
+    """
+    For each table that already exists, check for missing columns and
+    add them via ALTER TABLE. This handles the case where tables were
+    created under an older schema (v1) that lacked columns like
+    session_id, search_vector, storage_path, etc.
+
+    Generated columns (like search_vector tsvector) require special
+    ALTER TABLE ... ADD COLUMN syntax.
+    """
+    for table_name in TABLE_CREATE_ORDER:
+        if not _table_exists(cur, table_name):
+            # Table doesn't exist yet — CREATE TABLE will handle it
+            continue
+
+        expected = EXPECTED_COLUMNS.get(table_name, [])
+        if not expected:
+            continue
+
+        existing = _get_existing_columns(cur, table_name)
+        missing = [(col, typedef, is_gen) for col, typedef, is_gen in expected
+                    if col not in existing]
+
+        if not missing:
+            continue
+
+        logger.info("  Migrating table '%s': adding %d missing column(s)...",
+                     table_name, len(missing))
+
+        for col_name, col_type, is_generated in missing:
+            # Skip PRIMARY KEY columns — they can't be added after the fact
+            if "PRIMARY KEY" in col_type.upper():
+                logger.warning("    Skipping PK column '%s' on '%s' — cannot add PK via ALTER TABLE",
+                               col_name, table_name)
+                continue
+
+            try:
+                alter_sql = f"ALTER TABLE {table_name} ADD COLUMN {col_name} {col_type}"
+                cur.execute(alter_sql)
+                logger.info("    Added column: %s.%s", table_name, col_name)
+            except psycopg2.Error as col_err:
+                # Column might already exist (race condition) or type conflict
+                logger.warning("    Could not add column %s.%s: %s",
+                               table_name, col_name, col_err)
+
+
+# ===========================================================================
 # Extension, Table, and Index Setup
 # ===========================================================================
 
 def _setup_schema(conn):
     """
-    Create the pgvector extension, all tables, and all indexes.
+    Create the pgvector extension, all tables, migrate missing columns,
+    and create all indexes.
 
-    Everything uses IF NOT EXISTS / IF NOT EXISTS so it's fully idempotent.
+    Everything uses IF NOT EXISTS so it's fully idempotent.
     """
     conn.autocommit = True
     cur = conn.cursor()
@@ -286,19 +438,37 @@ def _setup_schema(conn):
             f"Original error: {e}"
         ) from e
 
-    # 2. Tables (order matters for foreign keys)
-    for table_name in TABLE_CREATE_ORDER:
-        cur.execute(TABLE_DEFINITIONS[table_name])
-        logger.info("  Table ready: %s", table_name)
+    # 2. Migrate missing columns on existing tables BEFORE creating tables
+    #    (so that CREATE TABLE IF NOT EXISTS + ALTER TABLE cover all cases)
+    try:
+        _migrate_missing_columns(cur)
+    except Exception as mig_err:
+        logger.warning("  Column migration had issues: %s", mig_err)
 
-    # 3. B-tree and GIN indexes
+    # 3. Tables (order matters for foreign keys)
+    for table_name in TABLE_CREATE_ORDER:
+        try:
+            cur.execute(TABLE_DEFINITIONS[table_name])
+            logger.info("  Table ready: %s", table_name)
+        except psycopg2.Error as tbl_err:
+            logger.warning("  Table creation note for '%s': %s", table_name, tbl_err)
+
+    # 4. Run migration again after table creation to catch any tables
+    #    that were just created but might still be missing columns
+    #    (e.g., if the CREATE TABLE above was a no-op for an existing table)
+    try:
+        _migrate_missing_columns(cur)
+    except Exception as mig_err:
+        logger.warning("  Post-creation migration note: %s", mig_err)
+
+    # 5. B-tree and GIN indexes
     for idx_sql in INDEX_DEFINITIONS:
         try:
             cur.execute(idx_sql)
         except psycopg2.Error as idx_err:
             logger.warning("  Index note: %s", idx_err)
 
-    # 4. HNSW vector indexes
+    # 6. HNSW vector indexes
     for vidx_sql in VECTOR_INDEX_DEFINITIONS:
         try:
             cur.execute(vidx_sql)
