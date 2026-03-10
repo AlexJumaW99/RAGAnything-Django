@@ -425,9 +425,13 @@ def _setup_schema(conn):
     conn.autocommit = True
     cur = conn.cursor()
 
+    # 0. Ensure public schema exists (may have been dropped)
+    cur.execute("CREATE SCHEMA IF NOT EXISTS public;")
+    cur.execute("SET search_path TO public;")
+
     # 1. pgvector extension
     try:
-        cur.execute("CREATE EXTENSION IF NOT EXISTS vector;")
+        cur.execute("CREATE EXTENSION IF NOT EXISTS vector SCHEMA public;")
         logger.info("  pgvector extension: ready")
     except psycopg2.Error as e:
         logger.error("Failed to create pgvector extension: %s", e)
