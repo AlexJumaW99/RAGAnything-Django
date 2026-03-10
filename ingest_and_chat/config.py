@@ -48,7 +48,7 @@ PG_HOST = _setting("PG_HOST", "POSTGRES_HOST", "localhost")
 PG_PORT = int(_setting("PG_PORT", "POSTGRES_PORT", 5432))
 PG_USERNAME = _setting("PG_USERNAME", "POSTGRES_USER", "admin")
 PG_PASSWORD = _setting("PG_PASSWORD", "POSTGRES_PASSWORD", "")
-PG_DATABASE = _setting("PG_DATABASE", "POSTGRES_DATABASE", "vector")
+PG_DATABASE = _setting("PG_DATABASE", "POSTGRES_DATABASE", "rag_v2")
 
 if not PG_PASSWORD:
     logger.warning("POSTGRES_PASSWORD not configured — database operations may fail.")

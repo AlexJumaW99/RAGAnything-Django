@@ -2,11 +2,13 @@
 """
 Django views:
     GET  /                  - Ingestion dashboard UI
+    GET  /chat-ui/          - Chat page UI
     GET  /health/           - Health check
     POST /ingest/           - Run ingestion (SSE streaming response)
-                              Accepts JSON {"target_path": "..."} OR
-                              multipart file uploads
     POST /stop/             - Cancel running ingestion
+
+    # Providers
+    GET  /providers/        - List available LLM providers
 
     # Sessions
     GET  /sessions/         - List ingestion sessions
@@ -90,36 +92,22 @@ def _save_uploaded_files(request) -> tuple:
     Save uploaded files from a multipart request to a temporary directory,
     preserving directory structure when relative paths are provided.
 
-    The frontend sends two parallel form arrays:
-      - "files": the actual file blobs
-      - "relative_paths": the relative path for each file (e.g. "project/src/main.py")
-
-    When relative_paths are present, files are placed in their original
-    directory structure. Otherwise they're saved flat.
-
     Returns (upload_dir_path, error_message).
-    If successful, error_message is None.
     """
     files = request.FILES.getlist("files")
     if not files:
         return None, "No files were uploaded."
 
-    # Get relative paths (one per file, in matching order)
     relative_paths = request.POST.getlist("relative_paths")
 
-    # Create a unique upload directory
     upload_id = uuid.uuid4().hex[:12]
     upload_dir = os.path.join(UPLOAD_ROOT, f"upload_{upload_id}")
     os.makedirs(upload_dir, exist_ok=True)
 
     try:
         for i, uploaded_file in enumerate(files):
-            # Determine the destination path
             if i < len(relative_paths) and relative_paths[i]:
-                # Use the relative path from the frontend
                 rel_path = relative_paths[i]
-                # Security: sanitize to prevent directory traversal
-                # Remove any leading slashes or .. components
                 parts = rel_path.replace("\\", "/").split("/")
                 safe_parts = [
                     p for p in parts
@@ -129,18 +117,14 @@ def _save_uploaded_files(request) -> tuple:
                     safe_parts = [uploaded_file.name or f"unnamed_{uuid.uuid4().hex[:8]}"]
                 rel_path = os.path.join(*safe_parts)
             else:
-                # Flat file — just use the filename
                 filename = os.path.basename(uploaded_file.name or "")
                 if not filename:
                     filename = f"unnamed_{uuid.uuid4().hex[:8]}"
                 rel_path = filename
 
             dest_path = os.path.join(upload_dir, rel_path)
-
-            # Create parent directories
             os.makedirs(os.path.dirname(dest_path), exist_ok=True)
 
-            # Handle name collisions
             if os.path.exists(dest_path):
                 name, ext = os.path.splitext(dest_path)
                 dest_path = f"{name}_{uuid.uuid4().hex[:6]}{ext}"
@@ -154,7 +138,6 @@ def _save_uploaded_files(request) -> tuple:
         return upload_dir, None
 
     except Exception as e:
-        # Clean up on failure
         try:
             shutil.rmtree(upload_dir, ignore_errors=True)
         except Exception:
@@ -170,6 +153,12 @@ def _save_uploaded_files(request) -> tuple:
 def dashboard(request):
     """Serve the ingestion dashboard UI."""
     return render(request, "ingest_and_chat/dashboard.html")
+
+
+@require_GET
+def chat_page(request):
+    """Serve the chat page UI."""
+    return render(request, "ingest_and_chat/chat.html")
 
 
 @require_GET
@@ -194,18 +183,33 @@ def health(request):
 
 
 # ---------------------------------------------------------------------------
+# LLM Providers
+# ---------------------------------------------------------------------------
+
+@csrf_exempt
+def providers_list(request):
+    """GET: list available LLM providers and their status."""
+    if request.method == "OPTIONS":
+        return _options_response()
+    if request.method != "GET":
+        return _json_error("Method not allowed.", 405)
+
+    try:
+        from .llm_providers import get_provider_info
+        providers = get_provider_info()
+        return _json_ok({"providers": providers})
+    except Exception as e:
+        logger.exception("Failed to list providers")
+        return _json_error(str(e), 500)
+
+
+# ---------------------------------------------------------------------------
 # Ingestion
 # ---------------------------------------------------------------------------
 
 @csrf_exempt
 def ingest(request):
-    """
-    Run the full RAG ingestion pipeline (SSE stream).
-
-    Accepts EITHER:
-      - JSON body: {"target_path": "/absolute/path/to/files"}
-      - Multipart form: files uploaded via browser file picker
-    """
+    """Run the full RAG ingestion pipeline (SSE stream)."""
     if request.method == "OPTIONS":
         return _options_response()
     if request.method != "POST":
@@ -217,7 +221,6 @@ def ingest(request):
     target_path = None
     is_upload = False
 
-    # Check if this is a multipart file upload
     if request.content_type and "multipart" in request.content_type:
         upload_dir, upload_err = _save_uploaded_files(request)
         if upload_err:
@@ -227,7 +230,6 @@ def ingest(request):
         logger.info("File upload ingestion: %d file(s) saved to %s",
                      len(request.FILES.getlist("files")), upload_dir)
     else:
-        # JSON body with target_path
         body, err = _parse_body(request)
         if err:
             return err
@@ -322,7 +324,8 @@ def chat_send(request):
         {
             "question": "...",
             "conversation_id": "uuid" (optional — created if omitted),
-            "session_id": "uuid"      (optional — scope search to session)
+            "session_id": "uuid"      (optional — scope search to session),
+            "provider": "gemini|claude|ollama" (optional, default gemini)
         }
 
     Returns:
@@ -331,7 +334,8 @@ def chat_send(request):
             "answer": "...",
             "sources": [...],
             "tool_results": [...],
-            "tables_searched": [...]
+            "tables_searched": [...],
+            "provider_used": "..."
         }
     """
     if request.method == "OPTIONS":
@@ -349,6 +353,7 @@ def chat_send(request):
 
     conversation_id = body.get("conversation_id")
     session_id = body.get("session_id")
+    provider = body.get("provider")
 
     try:
         # Create conversation if not provided
@@ -363,6 +368,7 @@ def chat_send(request):
             conversation_id=conversation_id,
             question=question,
             session_id=session_id,
+            provider=provider,
         )
 
         if result.get("error"):
@@ -407,7 +413,7 @@ def conversation_history(request, conversation_id):
         limit = request.GET.get("limit")
         limit = int(limit) if limit else None
         messages = chat_service.get_conversation_history(conversation_id, limit=limit)
-        return _json_ok({"conversation_id": conversation_id, "messages": messages})
+        return _json_ok({"conversation_id": str(conversation_id), "messages": messages})
     except Exception as e:
         logger.exception("Failed to get conversation history")
         return _json_error(str(e), 500)
@@ -424,7 +430,7 @@ def conversation_delete(request, conversation_id):
     try:
         deleted = chat_service.delete_conversation(conversation_id)
         if deleted:
-            return _json_ok({"deleted": True, "conversation_id": conversation_id})
+            return _json_ok({"deleted": True, "conversation_id": str(conversation_id)})
         return _json_error("Conversation not found.", 404)
     except Exception as e:
         logger.exception("Failed to delete conversation")

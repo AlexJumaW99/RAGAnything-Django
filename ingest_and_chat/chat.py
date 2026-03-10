@@ -7,6 +7,7 @@ Provides:
   - Pandas code generation + sandboxed execution for structured data
   - Conversation management with message history
   - Session-scoped queries
+  - Multi-provider LLM support (Gemini, Claude, Ollama)
 
 All functions are designed to be called from views.py.
 """
@@ -25,7 +26,6 @@ from psycopg2.extras import Json, RealDictCursor
 
 from .db import get_connection
 from .config import (
-    get_llm,
     get_embedding_model,
     PG_HOST, PG_PORT, PG_USERNAME, PG_PASSWORD, PG_DATABASE,
     SIMILARITY_THRESHOLD,
@@ -48,6 +48,32 @@ def _get_conn():
     Delegates to db.get_connection() which handles auto-initialization.
     """
     return get_connection()
+
+
+# ---------------------------------------------------------------------------
+# LLM provider helper
+# ---------------------------------------------------------------------------
+
+def _get_llm_provider(provider_name: Optional[str] = None):
+    """
+    Return an LLM provider instance.
+
+    If provider_name is given, use that provider.
+    Otherwise fall back to the Gemini provider (legacy behaviour).
+    """
+    if provider_name:
+        from .llm_providers import get_provider
+        return get_provider(provider_name)
+    else:
+        # Legacy fallback: use Gemini via the old config.get_llm() path
+        from .config import get_llm
+        llm = get_llm()
+        # Wrap it in a simple adapter so .invoke() returns a string
+        class _LangchainAdapter:
+            def invoke(self, prompt):
+                resp = llm.invoke(prompt)
+                return resp.content
+        return _LangchainAdapter()
 
 
 # ===========================================================================
@@ -310,7 +336,7 @@ def _search_structured(cur, query_embedding, query_text, session_id=None, limit=
 # Pandas Code Execution (sandboxed)
 # ===========================================================================
 
-def _generate_pandas_code(llm, question: str, structured_result: dict) -> str:
+def _generate_pandas_code(llm_provider, question: str, structured_result: dict) -> str:
     """Ask the LLM to write pandas code to answer a question about a dataset."""
     prompt = (
         "You are a Python data analyst. Write pandas code to answer the "
@@ -333,8 +359,7 @@ def _generate_pandas_code(llm, question: str, structured_result: dict) -> str:
     )
 
     try:
-        response = llm.invoke(prompt)
-        code = response.content.strip()
+        code = llm_provider.invoke(prompt).strip()
         # Strip markdown fences if the LLM included them despite instructions
         if code.startswith("```"):
             lines = code.split("\n")
@@ -359,7 +384,6 @@ def _execute_pandas_code(code: str, storage_path: str) -> dict:
 
     def _run():
         output_capture = io.StringIO()
-        # Restricted builtins — no file I/O, no imports beyond what we provide
         safe_builtins = {
             "print": lambda *args, **kwargs: output_capture.write(
                 " ".join(str(a) for a in args) + "\n"
@@ -412,14 +436,15 @@ def _execute_pandas_code(code: str, storage_path: str) -> dict:
 # ===========================================================================
 
 def chat(conversation_id: str, question: str,
-         session_id: Optional[str] = None) -> dict:
+         session_id: Optional[str] = None,
+         provider: Optional[str] = None) -> dict:
     """
     Full chat flow:
       1. Load conversation history
-      2. Embed question → hybrid search across all tables
+      2. Embed question -> hybrid search across all tables
       3. For structured hits, generate + execute pandas code
       4. Build prompt with context + history
-      5. Get LLM answer
+      5. Get LLM answer (using requested provider)
       6. Save messages
       7. Return answer + sources + tool results
 
@@ -427,17 +452,17 @@ def chat(conversation_id: str, question: str,
         conversation_id: UUID of the conversation
         question:        User's question text
         session_id:      Optional ingestion session UUID to scope search
+        provider:        LLM provider name (gemini, claude, ollama)
 
     Returns:
         dict with keys: answer, sources, tool_results, tables_searched,
-                        user_message_id, assistant_message_id
+                        user_message_id, assistant_message_id, provider_used
     """
     conn = _get_conn()
     cur = conn.cursor()
 
     try:
         # Tables are guaranteed to exist by db.get_connection() / ensure_db_ready().
-        # We still check if any ingested data exists before querying.
         cur.execute("SELECT COUNT(*) FROM ingestion_sessions WHERE status = 'complete'")
         session_count = cur.fetchone()[0]
 
@@ -486,13 +511,15 @@ def chat(conversation_id: str, question: str,
         )
         structured_hits.extend(struct_results)
 
-        # 4. Execute pandas code for relevant structured files
-        llm = get_llm()
+        # 4. Get the LLM provider
+        llm_provider = _get_llm_provider(provider)
+        provider_used = provider or "gemini"
+
+        # Execute pandas code for relevant structured files
         tool_results = []
 
         for sf in structured_hits:
             if not sf.get("storage_path") or not os.path.exists(sf.get("storage_path", "")):
-                # No file on disk — fall back to schema context only
                 retrieved_chunks.append({
                     "source": sf["source"],
                     "content": (
@@ -505,12 +532,10 @@ def chat(conversation_id: str, question: str,
                 })
                 continue
 
-            # Generate pandas code
-            code = _generate_pandas_code(llm, question, sf)
+            code = _generate_pandas_code(llm_provider, question, sf)
             if not code:
                 continue
 
-            # Execute it
             exec_result = _execute_pandas_code(code, sf["storage_path"])
             tool_results.append({
                 "file": sf["source"],
@@ -518,7 +543,6 @@ def chat(conversation_id: str, question: str,
                 **exec_result,
             })
 
-            # Add execution result as context
             if exec_result["success"]:
                 retrieved_chunks.append({
                     "source": sf["source"],
@@ -532,7 +556,6 @@ def chat(conversation_id: str, question: str,
                     "table": "structured_files (pandas_exec)",
                 })
             else:
-                # Execution failed — provide schema context as fallback
                 retrieved_chunks.append({
                     "source": sf["source"],
                     "content": (
@@ -549,7 +572,6 @@ def chat(conversation_id: str, question: str,
         if not retrieved_chunks:
             answer = "No relevant results found in the knowledge base."
         else:
-            # Sort by best score available
             def _score(c):
                 return c.get("hybrid_score", c.get("similarity", 0))
 
@@ -564,11 +586,10 @@ def chat(conversation_id: str, question: str,
                 )
             context_block = "\n\n---\n\n".join(context_parts)
 
-            # Build conversation history block
             history_block = ""
             if history:
                 history_lines = []
-                for msg in history[-10:]:  # Last 10 messages for context
+                for msg in history[-10:]:
                     role_label = "User" if msg["role"] == "user" else "Assistant"
                     history_lines.append(f"{role_label}: {msg['content'][:500]}")
                 history_block = (
@@ -578,21 +599,22 @@ def chat(conversation_id: str, question: str,
                 )
 
             rag_prompt = (
-                "You are a helpful assistant answering questions based on retrieved "
-                "documents and data analysis results.\n"
-                "Use the context below to answer. If the context doesn't contain "
-                "enough information, say so.\n"
+                "You are a helpful assistant answering questions ONLY based on "
+                "the retrieved documents and data analysis results below.\n"
+                "IMPORTANT: You must ONLY answer based on the provided context. "
+                "If the context doesn't contain enough information to answer the "
+                "question, clearly state that the information is not available in "
+                "the knowledge base. Do NOT use your general knowledge.\n"
                 "Cite which source(s) you used by referencing [Source N].\n"
                 "If pandas analysis results are included, reference those findings.\n"
                 f"{history_block}\n"
                 f"--- RETRIEVED CONTEXT ---\n{context_block}\n\n"
                 f"--- USER QUESTION ---\n{question}\n\n"
-                "Provide a clear, concise answer:"
+                "Provide a clear, concise answer based ONLY on the context above:"
             )
 
             try:
-                response = llm.invoke(rag_prompt)
-                answer = response.content
+                answer = llm_provider.invoke(rag_prompt)
             except Exception as e:
                 answer = f"LLM error: {str(e)}"
 
@@ -632,6 +654,7 @@ def chat(conversation_id: str, question: str,
             "tables_searched": tables_searched,
             "user_message_id": user_msg_info["id"],
             "assistant_message_id": assistant_msg_info["id"],
+            "provider_used": provider_used,
         }
 
     except Exception as e:
@@ -691,7 +714,6 @@ def delete_session(session_id: str) -> bool:
     conn = _get_conn()
     cur = conn.cursor()
     try:
-        # Also clean up media files from disk
         cur.execute(
             "SELECT storage_path FROM media_files WHERE session_id = %s AND storage_path IS NOT NULL",
             (session_id,),
@@ -714,7 +736,6 @@ def delete_session(session_id: str) -> bool:
                 except OSError:
                     pass
 
-        # CASCADE will handle child rows
         cur.execute("DELETE FROM ingestion_sessions WHERE id = %s", (session_id,))
         conn.commit()
         return cur.rowcount > 0
