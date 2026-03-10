@@ -238,11 +238,14 @@ def _hybrid_search_documents(cur, query_embedding, query_text,
         LIMIT %s
     """
 
-    # Build params: vec search needs emb twice, text search needs query twice,
-    # plus optional session_ids
-    query_params = [formatted_emb, formatted_emb]
+    # Build params in the order the placeholders appear in the SQL:
+    #   vector_scores: %s::vector, [session_id], %s::vector
+    #   text_scores:   %s (tsquery), %s (tsquery), [session_id]
+    #   LIMIT:         %s
+    query_params = [formatted_emb]
     if session_id:
         query_params.append(session_id)
+    query_params.append(formatted_emb)
     query_params.extend([query_text, query_text])
     if session_id:
         query_params.append(session_id)
