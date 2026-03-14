@@ -224,7 +224,7 @@ def _hybrid_search_documents(cur, query_embedding, query_text,
                    ts_rank_cd(search_vector, plainto_tsquery('english', %s)) AS txt_score
             FROM document_chunks
             WHERE search_vector @@ plainto_tsquery('english', %s)
-            {session_filter.replace('session_id', 'dc.session_id') if session_id else ''}
+            {session_filter if session_id else ''}
             LIMIT {limit * 2}
         )
         SELECT
