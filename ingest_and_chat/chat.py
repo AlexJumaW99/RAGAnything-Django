@@ -89,7 +89,7 @@ def create_conversation(session_id: Optional[str] = None, title: Optional[str] =
             INSERT INTO conversations (session_id, title)
             VALUES (%s, %s)
             RETURNING id, session_id, title, created_at, updated_at
-        """, (session_id, title or "New conversation"))
+        """, (str(session_id) if session_id else None, title or "New conversation"))
         row = cur.fetchone()
         conn.commit()
         return dict(row)
@@ -112,7 +112,7 @@ def list_conversations(session_id: Optional[str] = None, limit: int = 50) -> lis
                 GROUP BY c.id
                 ORDER BY c.updated_at DESC
                 LIMIT %s
-            """, (session_id, limit))
+            """, (str(session_id), limit))
         else:
             cur.execute("""
                 SELECT c.*, COUNT(m.id) AS message_count
@@ -141,7 +141,7 @@ def get_conversation_history(conversation_id: str, limit: Optional[int] = None) 
             WHERE conversation_id = %s
             ORDER BY created_at ASC
             LIMIT %s
-        """, (conversation_id, effective_limit))
+        """, (str(conversation_id), effective_limit))
         return [dict(row) for row in cur.fetchall()]
     finally:
         cur.close()
@@ -153,8 +153,8 @@ def delete_conversation(conversation_id: str) -> bool:
     conn = _get_conn()
     cur = conn.cursor()
     try:
-        cur.execute("DELETE FROM chat_messages WHERE conversation_id = %s", (conversation_id,))
-        cur.execute("DELETE FROM conversations WHERE id = %s", (conversation_id,))
+        cur.execute("DELETE FROM chat_messages WHERE conversation_id = %s", (str(conversation_id),))
+        cur.execute("DELETE FROM conversations WHERE id = %s", (str(conversation_id),))
         conn.commit()
         return cur.rowcount > 0
     finally:
@@ -171,7 +171,7 @@ def _save_message(cur, conversation_id, session_id, role, content,
         VALUES (%s, %s, %s, %s, %s, %s)
         RETURNING id, created_at
     """, (
-        conversation_id, session_id, role, content,
+        str(conversation_id), str(session_id), role, content,
         Json(sources) if sources else None,
         Json(tool_calls) if tool_calls else None,
     ))
@@ -179,7 +179,7 @@ def _save_message(cur, conversation_id, session_id, role, content,
 
     cur.execute("""
         UPDATE conversations SET updated_at = NOW() WHERE id = %s
-    """, (conversation_id,))
+    """, (str(conversation_id),))
 
     return {"id": str(msg_row[0]), "created_at": msg_row[1].isoformat()}
 
@@ -207,7 +207,7 @@ def _hybrid_search_documents(cur, query_embedding, query_text,
 
     if session_id:
         session_filter = "AND session_id = %s"
-        params.append(session_id)
+        params.append(str(session_id))
 
     # Query combines vector score and text score
     sql = f"""
@@ -244,11 +244,11 @@ def _hybrid_search_documents(cur, query_embedding, query_text,
     #   LIMIT:         %s
     query_params = [formatted_emb]
     if session_id:
-        query_params.append(session_id)
+        query_params.append(str(session_id))
     query_params.append(formatted_emb)
     query_params.extend([query_text, query_text])
     if session_id:
-        query_params.append(session_id)
+        query_params.append(str(session_id))
     query_params.append(limit)
 
     cur.execute(sql, query_params)
@@ -273,7 +273,7 @@ def _search_media(cur, query_embedding, query_text, session_id=None, limit=3):
     session_clause = "AND session_id = %s" if session_id else ""
     params = [formatted_emb, formatted_emb]
     if session_id:
-        params.append(session_id)
+        params.append(str(session_id))
     params.append(limit)
 
     cur.execute(f"""
@@ -305,7 +305,7 @@ def _search_structured(cur, query_embedding, query_text, session_id=None, limit=
     session_clause = "AND session_id = %s" if session_id else ""
     params = [formatted_emb, formatted_emb]
     if session_id:
-        params.append(session_id)
+        params.append(str(session_id))
     params.append(limit)
 
     cur.execute(f"""
@@ -486,7 +486,7 @@ def chat(conversation_id: str, question: str,
             WHERE conversation_id = %s
             ORDER BY created_at DESC
             LIMIT %s
-        """, (conversation_id, CHAT_HISTORY_LIMIT))
+        """, (str(conversation_id), CHAT_HISTORY_LIMIT))
         rows = cur.fetchall()
         history = [{"role": r[0], "content": r[1]} for r in reversed(rows)]
 
@@ -699,7 +699,7 @@ def get_session(session_id: str) -> dict:
     try:
         cur.execute("""
             SELECT * FROM ingestion_sessions WHERE id = %s
-        """, (session_id,))
+        """, (str(session_id),))
         row = cur.fetchone()
         if not row:
             return None
@@ -719,7 +719,7 @@ def delete_session(session_id: str) -> bool:
     try:
         cur.execute(
             "SELECT storage_path FROM media_files WHERE session_id = %s AND storage_path IS NOT NULL",
-            (session_id,),
+            (str(session_id),),
         )
         for row in cur.fetchall():
             if row[0] and os.path.exists(row[0]):
@@ -730,7 +730,7 @@ def delete_session(session_id: str) -> bool:
 
         cur.execute(
             "SELECT storage_path FROM structured_files WHERE session_id = %s AND storage_path IS NOT NULL",
-            (session_id,),
+            (str(session_id),),
         )
         for row in cur.fetchall():
             if row[0] and os.path.exists(row[0]):
@@ -739,7 +739,7 @@ def delete_session(session_id: str) -> bool:
                 except OSError:
                     pass
 
-        cur.execute("DELETE FROM ingestion_sessions WHERE id = %s", (session_id,))
+        cur.execute("DELETE FROM ingestion_sessions WHERE id = %s", (str(session_id),))
         conn.commit()
         return cur.rowcount > 0
     finally:
