@@ -80,6 +80,28 @@
         align-items: center;
         gap: 12px;
       }
+      .topbar-right {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+      .chat-link {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 8px 16px;
+        background: var(--accent);
+        color: #fff;
+        font-family: var(--font);
+        font-size: 0.85rem;
+        font-weight: 500;
+        border-radius: var(--radius-sm);
+        text-decoration: none;
+        transition: background var(--ease);
+      }
+      .chat-link:hover {
+        background: #0b7f74;
+      }
       .topbar-logo {
         width: 36px;
         height: 36px;
@@ -769,9 +791,14 @@
           <div class="topbar-logo">RA</div>
           <div class="topbar-title">RAGAnything <span>/ Ingest</span></div>
         </div>
-        <div class="health-badge" id="healthBadge">
-          <div class="health-dot"></div>
-          <span id="healthText">Checking&hellip;</span>
+        <div class="topbar-right">
+          <a href="{% url 'ingest_and_chat:chat_page' %}" class="chat-link">
+            Chat &rarr;
+          </a>
+          <div class="health-badge" id="healthBadge">
+            <div class="health-dot"></div>
+            <span id="healthText">Checking&hellip;</span>
+          </div>
         </div>
       </header>
 

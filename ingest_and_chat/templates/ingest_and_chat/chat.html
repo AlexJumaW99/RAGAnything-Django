@@ -243,6 +243,22 @@
         opacity: 0.35; cursor: not-allowed;
         text-decoration: line-through;
       }
+      .ingest-link {
+        display: inline-flex; align-items: center; gap: 6px;
+        padding: 6px 14px;
+        background: var(--accent-soft);
+        color: var(--accent);
+        font-family: var(--font);
+        font-size: 0.8rem; font-weight: 500;
+        border-radius: var(--radius-sm);
+        text-decoration: none;
+        transition: all var(--ease);
+        border: 1px solid transparent;
+      }
+      .ingest-link:hover {
+        background: var(--accent);
+        color: #fff;
+      }
       .provider-pill .provider-dot {
         width: 6px; height: 6px; border-radius: 50%;
         background: var(--text-3);
@@ -584,7 +600,6 @@
         </div>
 
         <div class="sidebar-nav">
-          <a href="/api/rag/">Ingest</a>
           <a href="/api/rag/chat-ui/" class="active">Chat</a>
         </div>
 
@@ -628,6 +643,9 @@
                 <span class="provider-dot"></span>Ollama
               </button>
             </div>
+            <a href="{% url 'ingest_and_chat:dashboard' %}" class="ingest-link">
+              Ingest &rarr;
+            </a>
           </div>
         </div>
 
